@@ -6,7 +6,8 @@ Local testing:
 
 ./k8_test.sh --local
 
-Cluster testing (requires working kubectl)
+Cluster testing (requires working kubectl):
+
 ./k8_test.sh --cluster
 
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
@@ -14,7 +15,9 @@ There are also a host of other features such as email support, and ssh support. 
 Examples:
 
 Run local tests on remote host.
+
 ./k8_test.sh --local --ssh "user@host.name user2@host2.name2"
 
-Email on error (if you are using gmail you need an app password)
+Email on error (Note using gmail requires an app password)
+
 ./k8_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo' 
