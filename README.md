@@ -1,31 +1,27 @@
 This is the Nirmata test script.  It will check either your local system for Kubernetes compatiblity, or perform a basic health check of your kubernetes cluster.
 
-It has 2 basic modes:
+It has 2 basic modes:  
 
-Local testing:
-
+Local testing:  
 ./k8_test.sh --local
 
-Cluster testing (requires working kubectl):
-
-./k8_test.sh --cluster
+Cluster testing (requires working kubectl):  
+./k8_test.sh --cluster  
 
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
 
-Examples:
+Examples:  
+Run local tests on remote host.  
+./k8_test.sh --local --ssh "user@host.name user2@host2.name2"  
 
-Run local tests on remote host.
-
-./k8_test.sh --local --ssh "user@host.name user2@host2.name2"
-
-Email on error (Note using gmail requires an app password)
-
-./k8_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo' 
+Email on error (Note using gmail requires an app password)  
+./k8_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo'   
 
 The nirmata test script is a slightly modified version of k8 test that by default only checks nirmata services.
 
 Example output on kubernetes node:
-`root@silbory-nirmata0:~# ~nirmata/k8_test.sh --local
+```
+root@silbory-nirmata0:~# ~nirmata/k8_test.sh --local
 Starting Local Tests
 Checking for swap
 Testing SELinux
@@ -48,10 +44,12 @@ Testing silbory-nirmata0 Namespace default
 DNS test nirmata.com on nirmata-net-test-all-tmjl4 suceeded.
 DNS test kubernetes.default.svc.cluster.local on nirmata-net-test-all-tmjl4 suceeded.
 Testing completed without errors or warning
-root@silbory-nirmata0:~# '
+root@silbory-nirmata0:~# 
+```
 
 Example on Nirmata installed cluster:
-`root@ubuntu:~#  /home/nirmata/k8_test.sh --local
+```
+root@ubuntu:~#  /home/nirmata/k8_test.sh --local
 Starting Local Tests
 Checking for swap
 Testing SELinux
@@ -66,4 +64,4 @@ Found nirmata-host-agent
 Found nirmata-kube-controller
 Found Metrics container
 Testing completed without errors or warning
-`
+```
