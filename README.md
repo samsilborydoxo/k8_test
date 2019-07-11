@@ -21,3 +21,5 @@ Run local tests on remote host.
 Email on error (Note using gmail requires an app password)
 
 ./k8_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo' 
+
+The nirmata test script is a slightly modified version of k8 test that by default only checks nirmata services.
