@@ -8,7 +8,7 @@ Local testing:
 Cluster testing (requires working kubectl):  
 ./k8_test.sh --cluster  
 
-Test Nirmata application (mainly zookeeper and mongodb)
+Test Nirmata application (mainly zookeeper and mongodb)  
 ./k8_test.sh --nirmata
 
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
