@@ -37,6 +37,8 @@ sendemail='ssilbory/sendemail'
 alwaysemail=1
 # Set this to fix local issues by default
 fix_issues=1
+# warnings return 2 
+warnok=1
 
 if [ -f /.dockerenv ]; then
     export INDOCKER=0
@@ -85,6 +87,7 @@ helpfunction(){
     echo '--local                     Run local tests'
     echo '--nirmata                   Run Nirmata app tests'
     echo '-q                          Do not report success'
+    echo "--warnok                    Do not exit 2 on warnings."
     echo "--namespace namespace_name  (Default is \"$namespace\")."
     echo '--cluster                   Run Nirmata K8 cluster tests'
     echo "--service service_target    (Default $SERVICETARGET)."
@@ -266,6 +269,11 @@ for i in "$@";do
         ;;
         --always-email)
             alwaysemail=0
+            shift
+        ;;
+        --warnok)
+            script_args=" $script_args $1 "
+            warnok=0
             shift
         ;;
         #--email-opts)
@@ -773,7 +781,9 @@ else
     fi
     if [ $warn != 0 ];then
         warn "Test completed with warnings."
-        exit 0
+        if [ $warnok != 0 ];then 
+            exit 2
+        fi
     fi
     echo -e  "\e[32mTesting completed without errors or warning\e[0m"
     exit 0

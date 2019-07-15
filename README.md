@@ -22,6 +22,11 @@ Email on error (Note using gmail requires an app password)
 
 The nirmata test script is a slightly modified version of k8 test that by default only checks nirmata services.
 
+Return codes are as follows:  
+0 Good  
+1 Error  
+2 Warning  
+
 Example output on kubernetes node:
 ```
 root@silbory-nirmata0:~# ~nirmata/k8_test.sh --local
@@ -71,7 +76,7 @@ Testing completed without errors or warning
 
 Example testing Nirmata services on non-HA cluster: (warnings are due to the non HA state)
 ```
-root@silbory-nirmata0:~# ~nirmata/k8_test.sh --nirmata
+root@silbory-nirmata0:~# ~nirmata/k8_test.sh --nirmata  ;echo return is $?
 Testing MongoDB Pods
 mongodb-0 is master
 Found One Mongo Pod
@@ -82,4 +87,5 @@ Testing Kafka pods
 Found Kafka Pod kafka-0   1/1   Running   2     3d17h
 Found One Kafka Pod.
 Test completed with warnings.
+return is 2
 ```
