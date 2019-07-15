@@ -30,6 +30,8 @@ export error=0
 export warn=0
 nossh=0
 script_args=""
+# shellcheck disable=SC2124
+all_args="$@"
 email=1
 sendemail='ssilbory/sendemail'
 alwaysemail=1
@@ -81,6 +83,7 @@ helpfunction(){
     echo '--https                     Curl the service with https.'
     echo '--http                      Curl the service with http.'
     echo '--local                     Run local tests'
+    echo '--nirmata                   Run Nirmata app tests'
     echo '-q                          Do not report success'
     echo "--namespace namespace_name  (Default is \"$namespace\")."
     echo '--cluster                   Run Nirmata K8 cluster tests'
@@ -158,13 +161,30 @@ for i in "$@";do
         --local)
             script_args=" $script_args $1 "
             run_local=0
-            run_remote=1
+            if [[ ! $all_args == *--cluster* ]] ; then
+                run_remote=1
+            fi
             shift
         ;;
         --cluster)
             script_args=" $script_args $1 "
-            run_local=1
+            if [[ ! $all_args == *--local* ]] ; then
+                run_local=1
+            fi
             run_remote=0
+            shift
+        ;;
+        --nirmata)
+            script_args=" $script_args $1 "
+            run_mongo=0
+            run_zoo=0
+            run_kafka=0
+            if [[ ! $all_args == *--cluster* ]] ; then
+                run_remote=1
+            fi
+            if [[ ! $all_args == *--local* ]] ; then
+                run_local=1
+            fi
             shift
         ;;
         --exit)
@@ -308,7 +328,7 @@ zoos=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeepe
 zoo_num=0
 zoo_leader=""
 for zoo in $zoos; do
-    curr_zoo=$(kubectl -n $zoo_ns exec $zoo -- sh -c "/opt/zookeeper-*/bin/zkServer.sh status status" 2>&1|grep Mode)
+    curr_zoo=$(kubectl -n $zoo_ns exec $zoo -- sh -c "/opt/zookeeper-*/bin/zkServer.sh status" 2>&1|grep Mode)
     if [[  $curr_zoo =~ "leader" ]];then
         echo "$zoo is zookeeper leader"
         zoo_leader="$zoo_leader $zoo"
@@ -599,13 +619,12 @@ fi
 if type kubelet &>/dev/null;then
     #test for k8 service
     echo Found kubelet running local kubernetes tests
-    if ! systemctl is-active kubelet &>/dev/null ; then
+    if ! systemctl is-active kubelet &>/dev/null;then
         error 'Kubelet is not active?'
     else
         good Kublet is active
     fi
-
-    if ! systemctl is-enabled kubelet &>/dev/null ; then
+    if ! systemctl is-enabled kubelet &>/dev/null;then
         if [[ $fix_issues -eq 0 ]];then
             echo "Applying the following fixes"
             echo systectl enable kubelet
@@ -616,11 +635,17 @@ if type kubelet &>/dev/null;then
     else
         good Kublet is enabled at boot
     fi
-
+else
+    if [ -e /etc/systemd/system/nirmata-agent.service ];then
+        echo Found nirmata-agent.service testing Nirmata agent
+        test_agent
+    else
+        error No Kubelet or Nirmata Agent!!!
+    fi
+fi
     if [ ! -e /opt/cni/bin/bridge ];then
         warn '/opt/cni/bin/bridge not found is your CNI installed?'
     fi
-fi
 
 if [ ! -e /opt/cni/bin/bridge ];then
     warn '/opt/cni/bin/bridge not found is your CNI installed?'
@@ -628,9 +653,53 @@ fi
 
 }
 
+test_agent(){
+echo Test Nirmata Agent
+if systemctl is-active nirmata-agent &>/dev/null ; then
+    good Nirmata Agent is running
+else
+    error Nirmata Agent is not running
+fi
+if systemctl is-enabled nirmata-agent &>/dev/null ; then
+    good Nirmata Agent is enabled at boot
+else
+    error Nirmata Agent is not enabled at boot
+fi
+if docker ps |grep -q -e nirmata/nirmata-host-agent;then
+    good Found nirmata-host-agent
+else
+    error nirmata-host-agent is not running!
+fi
+if docker ps |grep -q -e "hyperkube proxy";then
+    good Found hyperkube proxy
+else
+    error Hyperkube proxy is not running!
+fi
+if docker ps --no-trunc|grep -q -e 'hyperkube kubelet' ;then
+    good Found hyperkube kubelet
+else
+    error Hyperkube kubelet is not running!
+fi
+if docker ps |grep -q -e /opt/bin/flanneld ;then
+    good Found flanneld
+else
+    error Flanneld is not running!
+fi
+# How do we determine if this is the master?
+#grep -e /usr/local/bin/etcd -e /nirmata-kube-controller -e /metrics-server -e "hyperkube apiserver"
+#if docker ps |grep -q -e nirmata/nirmata-kube-controller;then
+#    good Found nirmata-kube-controller
+#else
+#    error nirmata-kube-controller is not running!
+#fi
+#if docker ps |grep -q -e /metrics-server;then
+#    good Found Metrics container
+#else
+#    error Metrics container is not running!
+#fi
+}
+
 #start main script
-
-
 if [ ! -z $logfile ];then
     $0 $script_args 2>&1 |tee $logfile
     return_code=$?
