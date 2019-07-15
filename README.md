@@ -8,6 +8,9 @@ Local testing:
 Cluster testing (requires working kubectl):  
 ./k8_test.sh --cluster  
 
+Test Nirmata application (mainly zookeeper and mongodb)
+./k8_test.sh --nirmata
+
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
 
 Examples:  
@@ -64,4 +67,19 @@ Found nirmata-host-agent
 Found nirmata-kube-controller
 Found Metrics container
 Testing completed without errors or warning
+```
+
+Example testing Nirmata services on non-HA cluster: (warnings are due to the non HA state)
+```
+root@silbory-nirmata0:~# ~nirmata/k8_test.sh --nirmata
+Testing MongoDB Pods
+mongodb-0 is master
+Found One Mongo Pod
+Testing Zookeeper pods
+zk-0 is zookeeper standalone
+Found One Zookeeper Pod.
+Testing Kafka pods
+Found Kafka Pod kafka-0   1/1   Running   2     3d17h
+Found One Kafka Pod.
+Test completed with warnings.
 ```
