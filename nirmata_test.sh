@@ -11,7 +11,7 @@ allns=1
 # set to zero to default to curl url
 curl=1
 # Default namespace
-namespace="default"
+namespace="nirmata"
 # Should we continue to execute on failure
 CONTINUE="yes"
 # Set to yes to be quieter
@@ -20,10 +20,10 @@ QUIET="no"
 run_local=1
 # set to 1 to disable remote tests to 0
 run_remote=1
-# These are used to run the mongo, zookeeper, and kafka tests by default.  You'll want to set local and remote to 1 above.
-run_mongo=0
-run_zoo=0
-run_kafka=0
+# These are used to run the mongo, zookeeper, and kafka tests by default.
+run_mongo=1
+run_zoo=1
+run_kafka=1
 # Did we get an error?
 export error=0
 # Did we get a warning?
@@ -32,13 +32,25 @@ nossh=0
 script_args=""
 # shellcheck disable=SC2124
 all_args="$@"
+# We should do something if there is no instruction for us
+if [[ ! $all_args == *--cluster* ]] ; then
+    if [[ ! $all_args == *--local* ]] ; then
+        if [[ ! $all_args == *--nirmata* ]] ; then
+            run_mongo=0
+            run_zoo=0
+            run_kafka=0
+        fi
+    fi
+fi
 email=1
 sendemail='ssilbory/sendemail'
 alwaysemail=1
 # Set this to fix local issues by default
 fix_issues=1
-# warnings return 2 
+# warnings return 2
 warnok=1
+#additional args for kubectl
+add_kubectl=""
 
 if [ -f /.dockerenv ]; then
     export INDOCKER=0
@@ -57,6 +69,7 @@ error(){
        for ns in $namespaces;do
           kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
         done
+        kubectl --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
         # THIS EXITS THE SCRIPT
         exit 1
     fi
@@ -117,6 +130,7 @@ helpfunction(){
 }
 
 # deal with args
+# This for loop is getting out of control it might be worth using getops or something.
 for i in "$@";do
     case $i in
         --dns-target)
@@ -195,6 +209,16 @@ for i in "$@";do
             CONTINUE="no"
             shift
         ;;
+        --insecure)
+            script_args=" $script_args $1 $2 "
+            add_kubectl=" $add_kubectl --insecure-skip-tls-verify=false "
+            shift
+        ;;
+        --client-cert)
+            add_kubectl=" $add_kubectl --client-certificate=$2"
+            shift
+            shift
+        ;;
         -q)
             script_args=" $script_args $1 "
             QUIET="yes"
@@ -262,7 +286,7 @@ for i in "$@";do
             shift
             shift
         ;;
-                --sendemail)
+        --sendemail)
             sendemail=$2
             shift
             shift
@@ -286,7 +310,8 @@ for i in "$@";do
             helpfunction
             exit 0
         ;;
-        *)
+        # Remember that shifting doesn't remove later args from the loop
+        -*)
             helpfunction
             exit 1
         ;;
@@ -294,17 +319,28 @@ for i in "$@";do
 done
 # We don't ever want to pass --ssh!!!
 script_args=$(echo $script_args |sed 's/--ssh//')
+# shellcheck disable=SC2139
+alias kubectl="kubectl $add_kubectl "
 
 mongo_test(){
 # mongo testing
 echo "Testing MongoDB Pods"
-mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
-mongos=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $2}')
+if [ -n "$namespace" ];then
+    mongo_ns=$namespace
+else
+    mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
+fi
+mongos=$(kubectl get pod --namespace=$namespace -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')
 mongo_num=0
 mongo_master=""
 mongo_error=0
 for mongo in $mongos; do
-    cur_mongo=$(kubectl -n $mongo_ns exec $mongo -c mongodb -- sh -c 'echo "db.serverStatus()" |mongo' 2>&1|grep  '"ismaster"')
+    if kubectl -n $mongo_ns get pod $mongo --no-headers |awk '{ print $2 }' |grep -q '[0-2]/2'; then
+        mongo_container="-c mongodb"
+    else
+        mongo_container=""
+    fi
+    cur_mongo=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "db.serverStatus()" |mongo' 2>&1|grep  '"ismaster"')
     if [[  $cur_mongo =~ "true" ]];then
         echo "$mongo is master"
         mongo_master="$mongo_master $mongo"
@@ -318,6 +354,13 @@ for mongo in $mongos; do
         fi
     fi
     mongo_num=$((mongo_num + 1));
+    mongo_stateStr=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo' 2>&1 |grep stateStr)
+    if [[ $mongo_stateStr =~ RECOVERING || $mongo_stateStr =~ DOWN || $mongo_stateStr =~ STARTUP ]];then
+        if [[ $mongo_stateStr =~ RECOVERING ]];then warn "Detected recovering Mongodb from this node!"; fi
+        if [[ $mongo_stateStr =~ DOWN ]];then error "Detected Mongodb in down state from this node!"; fi
+        if [[ $mongo_stateStr =~ STARTUP ]];then warn "Detected Mongodb in startup state from this node!"; fi
+        kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo'
+    fi
 done
 [[ $mongo_num -gt 3 ]] && error "Found $mongo_num Mongo Pods $mongos!!!" && mongo_error=1
 [[ $mongo_num -eq 0 ]] && error "Found Mongo Pods $mongo_num!!!" && mongo_error=1
@@ -331,8 +374,12 @@ zoo_test(){
 # Zookeeper testing
 zoo_error=0
 echo "Testing Zookeeper pods"
-zoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)
-zoos=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $2}')
+if [ -n "$namespace" ];then
+    zoo_ns=$namespace
+else
+    zoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)
+fi
+zoos=$(kubectl get pod -n $zoo_ns -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}')
 zoo_num=0
 zoo_leader=""
 for zoo in $zoos; do
@@ -359,19 +406,49 @@ for zoo in $zoos; do
     zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
     [[ $zoo_df -gt 50 ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
 done
+
+# This is a crude parse, but it will do.
+connected_kaf=$(kubectl exec -it $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | /opt/zookeeper/bin/zkCli.sh")
+con_kaf_num=0
+# shellcheck disable=SC2076
+if [[ $connected_kaf =~ '[0, 1, 2]' ]];then
+    con_kaf_num=3
+fi
+# shellcheck disable=SC2076
+if [[ $connected_kaf =~ '[0, 1]' ]];then
+    con_kaf_num=2
+fi
+# shellcheck disable=SC2076
+if [[ $connected_kaf =~ '[0]' ]];then
+    con_kaf_num=1
+fi
+
 [[ $zoo_num -gt 3 ]] && error "Found $zoo_num Zookeeper Pods $zoos!!!" && zoo_error=1
 [[ $zoo_num -eq 0 ]] && error "Found Zero Zookeeper Pods !!" && zoo_error=1
 [[ $zoo_num -eq 1 ]] && warn "Found One Zookeeper Pod." && zoo_error=1
 [ -z $zoo_leader ] &&  error "No Zookeeper Leader found!!" && zoo_error=1
 [[ $(echo $zoo_leader|wc -w) -gt 1 ]] && warn "Found Zookeeper Leaders $zoo_leader." && zoo_error=1
 [ $zoo_error -eq 0 ] && good "Zookeeper passed tests"
+if [[ $con_kaf_num -eq 3 ]];then
+    good "Found 3 connected Kafkas"
+else
+    if [[ $con_kaf_num -gt 0 ]];then
+        warn "Found $con_kaf_num connected Kafkas"
+    else
+        error "Found $con_kaf_num connected Kafkas"
+    fi
+fi
 }
 
 kafka_test(){
 #  testing
 echo "Testing Kafka pods"
-kafka_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}'|head -1)
-kafkas=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $2}')
+if [ -n "$namespace" ];then
+    kafka_ns=$namespace
+else
+    kafka_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}'|head -1)
+fi
+kafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}')
 kaf_num=0
 for kafka in $kafkas; do
     echo "Found Kafka Pod $(kubectl -n $kafka_ns get pod $kafka --no-headers)"
@@ -408,6 +485,7 @@ spec:
     for ns in $namespaces;do
             kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
     done
+    kubectl --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
     #echo allns is $allns
     if [ $allns != 1 ];then
         for ns in $namespaces;do
@@ -743,7 +821,17 @@ else
             # shellcheck disable=SC1012
             sed -i -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" $logfile
             BODY=$(cat $logfile)
-            docker run $sendemail $TO $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
+            if type -P "sendEmail" &>/dev/null; then
+                if [ -n "$PASSWORD" ];then
+                    #echo sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
+                    sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS" -m \""${BODY}"\"
+                else
+                    #echo sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
+                    sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS" -m \""${BODY}"\"
+                fi
+            else
+                docker run $sendemail $TO $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
+            fi
             #If they named it something else don't delete
             rm -f /tmp/k8_test.$$
             exit 1
@@ -781,7 +869,7 @@ else
     fi
     if [ $warn != 0 ];then
         warn "Test completed with warnings."
-        if [ $warnok != 0 ];then 
+        if [ $warnok != 0 ];then
             exit 2
         fi
     fi

@@ -1,26 +1,25 @@
-This is the Nirmata test script.  It will check either your local system for Kubernetes compatiblity, or perform a basic health check of your kubernetes cluster.
+This is the Nirmata test script.  It will check either your nirmata install, local system for Kubernetes compatiblity, or perform a basic health check of your kubernetes cluster.
 
 It has 2 basic modes:  
 
 Local testing:  
-./k8_test.sh --local
+./nirmata_test.sh --local
 
 Cluster testing (requires working kubectl):  
-./k8_test.sh --cluster  
+./nirmata_test.sh --cluster  
 
-Test Nirmata application (mainly zookeeper and mongodb)  
-./k8_test.sh --nirmata
+Test Nirmata application (default)  
+./nirmata_test.sh --nirmata
 
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
 
 Examples:  
 Run local tests on remote host.  
-./k8_test.sh --local --ssh "user@host.name user2@host2.name2"  
+./nirmata_test.sh --local --ssh "user@host.name user2@host2.name2"  
 
 Email on error (Note using gmail requires an app password)  
-./k8_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo'   
+./nirmata_test.sh --cluster --email --to testy@nirmata.com --smtp smtp.gmail.com:587  --user sam.silbory --passwd 'foo!foo'   
 
-The nirmata test script is a slightly modified version of k8 test that by default only checks nirmata services.
 
 Return codes are as follows:  
 0 Good  
@@ -29,7 +28,7 @@ Return codes are as follows:
 
 Example output on kubernetes node:
 ```
-root@silbory-nirmata0:~# ~nirmata/k8_test.sh --local
+root@silbory-nirmata0:~# ~nirmata/nirmata_test.sh --local
 Starting Local Tests
 Checking for swap
 Testing SELinux
@@ -40,7 +39,7 @@ Found kubelet running local kubernetes tests
 Kublet is active
 Kublet is enabled at boot
 Testing completed without errors or warning
-root@silbory-nirmata0:~# ~nirmata/k8_test.sh --cluster
+root@silbory-nirmata0:~# ~nirmata/nirmata_test.sh --cluster
 Starting Cluster Tests
 
 Found the following nodes:
@@ -57,7 +56,7 @@ root@silbory-nirmata0:~#
 
 Example on Nirmata installed cluster:
 ```
-root@ubuntu:~#  /home/nirmata/k8_test.sh --local
+root@ubuntu:~#  /home/nirmata/nirmata_test.sh --local
 Starting Local Tests
 Checking for swap
 Testing SELinux
@@ -76,7 +75,7 @@ Testing completed without errors or warning
 
 Example testing Nirmata services on non-HA cluster: (warnings are due to the non HA state)
 ```
-root@silbory-nirmata0:~# ~nirmata/k8_test.sh --nirmata  ;echo return is $?
+root@silbory-nirmata0:~# ~nirmata/nirmata_test.sh --nirmata  ;echo return is $?
 Testing MongoDB Pods
 mongodb-0 is master
 Found One Mongo Pod
