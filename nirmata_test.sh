@@ -340,6 +340,8 @@ for mongo in $mongos; do
     else
         mongo_container=""
     fi
+    mongo_df=$(kubectl -n $zoo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    [[ $mongo_df -gt 70 ]] && error "Found MongoDB volume at ${mongo_df}% usage on $kafka"
     cur_mongo=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "db.serverStatus()" |mongo' 2>&1|grep  '"ismaster"')
     if [[  $cur_mongo =~ "true" ]];then
         echo "$mongo is master"
@@ -362,11 +364,23 @@ for mongo in $mongos; do
         kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo'
     fi
 done
-[[ $mongo_num -gt 3 ]] && error "Found $mongo_num Mongo Pods $mongos!!!" && mongo_error=1
-[[ $mongo_num -eq 0 ]] && error "Found Mongo Pods $mongo_num!!!" && mongo_error=1
-[[ $mongo_num -eq 1 ]] && warn "Found One Mongo Pod"  && mongo_error=1
-[ -z $mongo_master ] &&  error "No Mongo Master found!!"  && mongo_error=1
-[[ $(echo $mongo_master|wc -w) -gt 1 ]] &&  error "Mongo Masters $mongo_master found!!" && mongo_error=1
+if [[ $mongo_num -gt 3 ]];then
+    error "Found $mongo_num Mongo Pods $mongos!!!"
+    mongo_error=1
+fi
+if [[ $mongo_num -eq 0 ]];then
+    error "Found Mongo Pods $mongo_num!!!" && mongo_error=1
+else
+    [[ $mongo_num -lt 3 ]] && warn "Found $mongo_num Mongo Pod"  && mongo_error=1
+fi
+if [ -z $mongo_master ]; then
+    error "No Mongo Master found!!"
+    mongo_error=1
+fi
+if [[ $(echo $mongo_master|wc -w) -gt 1 ]];then
+    error "Mongo Masters $mongo_master found!!"
+    mongo_error=1
+fi
 [ $mongo_error -eq 0 ] && good "MongoDB passed tests"
 }
 
@@ -404,11 +418,12 @@ for zoo in $zoos; do
     fi
     zoo_num=$((zoo_num + 1));
     zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $zoo_df -gt 50 ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
+    [[ $zoo_df -gt 70 ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
 done
 
 # This is a crude parse, but it will do.
-connected_kaf=$(kubectl exec -it $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | /opt/zookeeper/bin/zkCli.sh")
+zkCli=$(kubectl exec $zoo -n $zoo_ns -- sh -c "ls /opt/zoo*/bin/zkCli.sh|head -1")
+connected_kaf=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | $zkCli")
 con_kaf_num=0
 # shellcheck disable=SC2076
 if [[ $connected_kaf =~ '[0, 1, 2]' ]];then
@@ -423,12 +438,26 @@ if [[ $connected_kaf =~ '[0]' ]];then
     con_kaf_num=1
 fi
 
-[[ $zoo_num -gt 3 ]] && error "Found $zoo_num Zookeeper Pods $zoos!!!" && zoo_error=1
-[[ $zoo_num -eq 0 ]] && error "Found Zero Zookeeper Pods !!" && zoo_error=1
-[[ $zoo_num -eq 1 ]] && warn "Found One Zookeeper Pod." && zoo_error=1
-[ -z $zoo_leader ] &&  error "No Zookeeper Leader found!!" && zoo_error=1
-[[ $(echo $zoo_leader|wc -w) -gt 1 ]] && warn "Found Zookeeper Leaders $zoo_leader." && zoo_error=1
+if [[ $zoo_num -gt 3 ]];then
+    error "Found $zoo_num Zookeeper Pods $zoos!!!"
+    zoo_error=1
+fi
+if [[ $zoo_num -eq 0 ]];then
+    error "Found Zero Zookeeper Pods !!"
+    zoo_error=1
+else
+    [[ $zoo_num -eq 1 ]] && warn "Found One Zookeeper Pod." && zoo_error=1
+fi
+if [ -z $zoo_leader ];then
+    error "No Zookeeper Leader found!!"
+    zoo_error=1
+fi
+if [[ $(echo $zoo_leader|wc -w) -gt 1 ]];then
+    warn "Found Zookeeper Leaders $zoo_leader."
+    zoo_error=1
+fi
 [ $zoo_error -eq 0 ] && good "Zookeeper passed tests"
+
 if [[ $con_kaf_num -eq 3 ]];then
     good "Found 3 connected Kafkas"
 else
@@ -451,17 +480,58 @@ fi
 kafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}')
 kaf_num=0
 for kafka in $kafkas; do
-    echo "Found Kafka Pod $(kubectl -n $kafka_ns get pod $kafka --no-headers)"
+    echo "Found Kafka Pod $kafka"
     kafka_df=$(kubectl -n $kafka_ns exec $kafka -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $kafka_df -gt 50 ]] && error "Found Kafka volume at ${kafka_df}% usage on $kafka"
+    [[ $kafka_df -gt 70 ]] && error "Found Kafka volume at ${kafka_df}% usage on $kafka"
     kaf_num=$((kaf_num + 1));
 done
 [[ $kaf_num -gt 3 ]] && error "Found $kaf_num Kafka Pods $kafkas!!!" && kaf_error=1
-[[ $kaf_num -eq 0 ]] && error "Found Zero Kafka Pods!!" && kaf_error=1
-[[ $kaf_num -eq 1 ]] && warn "Found One Kafka Pod." && kaf_error=1
+if [[ $kaf_num -eq 0 ]];then
+    error "Found Zero Kafka Pods!!!"
+    kaf_error=1
+else
+    [[ $kaf_num -lt 3 ]] && warn "Found $kaf_num Kafka Pod!"
+    kaf_error=1
+fi
 [[ $kaf_error -eq 0 ]] && good "Kafka passed tests"
 }
 
+do_email(){
+if [[ $email -eq 0 ]];then
+    if [ -e /certs/ ];then
+        cp -f /certs/*.crt /usr/local/share/ca-certificates/
+        update-ca-certificates
+    fi
+    [ -z $logfile ] && logfile="/tmp/k8_test.$$"
+    [ -z $EMAIL_USER ] && EMAIL_USER=""
+    [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=""
+    #[ -z $TO ] && error "No TO address given!!!" && exit 1
+    [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
+    [ -z $SUBJECT ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
+    #[ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
+    echo
+    if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
+        if [[ $warnok -eq 0 && ${alwaysemail} -ne 0 || ${error} -eq 0 ]];then return 0;fi
+        #Let's wait for the file to sync in case tee is buffered
+        echo; echo; echo
+        sleep 2
+        # Reformat the log file for better reading
+        # shellcheck disable=SC1012
+        BODY=$(sed -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" ${logfile})
+        if type -P "sendEmail" &>/dev/null; then
+            if [ -n "$PASSWORD" ];then
+                echo $BODY |sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
+            else
+                echo $BODY |sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
+            fi
+        else
+            docker run $sendemail $TO $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
+        fi
+        #If they named it something else don't delete
+        rm -f /tmp/k8_test.$$
+    fi
+fi
+}
 remote_test(){
     command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'
     echo "Starting Cluster Tests"
@@ -786,14 +856,17 @@ fi
 }
 
 #start main script
-if [ ! -z $logfile ];then
-    $0 $script_args 2>&1 |tee $logfile
-    return_code=$?
-    # Reformat the log file for better reading
-    #shellcheck disable=SC1012
-    sed -i -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" $logfile
-    exit $return_code
+# Do we need to log?
+if [[ $email -eq 0 ]];then
+    if [ -z $logfile ];then
+        logfile="/tmp/k8_test.$$"
+    fi
 fi
+if [ ! -z $logfile ];then
+    exec > >(tee -i $logfile)
+fi
+
+# Really you should be using ansible or the like run this, but not all customers have something like that setup.
 if [[ $nossh -eq 1 ]];then
     if [[ ! -z $ssh_hosts ]];then
         for host in $ssh_hosts; do
@@ -803,46 +876,7 @@ if [[ $nossh -eq 1 ]];then
             echo
         done
     fi
-else
-    if [[ $email -eq 0 ]];then
-        script_args=$(echo $script_args |sed 's/--email//')
-        [ -z $logfile ] && logfile="/tmp/k8_test.$$"
-        [ -z $EMAIL_USER ] && EMAIL_USER=""
-        [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=""
-        #[ -z $TO ] && error "No TO address given!!!" && exit 1
-        [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
-        [ -z $SUBJECT ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
-        #[ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
-        echo
-        sleep 1
-        $0 $script_args 2>&1 |tee $logfile
-        if [[ ${PIPESTATUS[0]} -ne 0 || ${alwaysemail} -eq 0 ]]; then
-            # Reformat the log file for better reading
-            # shellcheck disable=SC1012
-            sed -i -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" $logfile
-            BODY=$(cat $logfile)
-            if type -P "sendEmail" &>/dev/null; then
-                if [ -n "$PASSWORD" ];then
-                    #echo sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
-                    sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS" -m \""${BODY}"\"
-                else
-                    #echo sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
-                    sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS" -m \""${BODY}"\"
-                fi
-            else
-                docker run $sendemail $TO $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
-            fi
-            #If they named it something else don't delete
-            rm -f /tmp/k8_test.$$
-            exit 1
-        fi
-        # Reformat the log file for better reading
-        # shellcheck disable=SC1012
-        sed -i -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" $logfile
-        #If they named it something else don't delete
-        rm -f /tmp/k8_test.$$
-        exit 0
-    fi
+fi
     if [[ $run_local -eq 0 ]];then
         local_test
     fi
@@ -865,14 +899,15 @@ else
 
     if [ $error != 0 ];then
         error "Test completed with errors!"
+        do_email
         exit $error
     fi
     if [ $warn != 0 ];then
         warn "Test completed with warnings."
         if [ $warnok != 0 ];then
+            do_email
             exit 2
         fi
     fi
     echo -e  "\e[32mTesting completed without errors or warning\e[0m"
     exit 0
-fi
