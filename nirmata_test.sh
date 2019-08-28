@@ -3,6 +3,7 @@
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules.
 
+version=1.0.1
 #default external dns target
 DNSTARGET=nirmata.com
 SERVICETARGET=kubernetes.default.svc.cluster.local
@@ -51,6 +52,8 @@ fix_issues=1
 warnok=1
 #additional args for kubectl
 add_kubectl=""
+# required free space
+df_free=80
 
 if [ -f /.dockerenv ]; then
     export INDOCKER=0
@@ -92,6 +95,7 @@ helpfunction(){
     echo "nicolaka/netshoot for cluster tests."
     echo "ssilbory/sendemail for sending email."
     echo "Usage: $0"
+    echo "--version                   Reports version ($version)"
     echo "--allns                     Test all namespaces (Default is only \"$namespace\")"
     echo '--dns-target dns.name       (Default nirmata.com)'
     #echo '--exit                     Exit on errors'
@@ -133,6 +137,10 @@ helpfunction(){
 # This for loop is getting out of control it might be worth using getops or something.
 for i in "$@";do
     case $i in
+        --version)
+            echo "$0 version $version"
+            exit 0
+        ;;
         --dns-target)
             script_args=" $script_args $1 $2 "
             DNSTARGET=$2
@@ -325,12 +333,8 @@ alias kubectl="kubectl $add_kubectl "
 mongo_test(){
 # mongo testing
 echo "Testing MongoDB Pods"
-if [ -n "$namespace" ];then
-    mongo_ns=$namespace
-else
-    mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
-fi
-mongos=$(kubectl get pod --namespace=$namespace -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')
+mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
+mongos=$(kubectl get pod --namespace=$mongo_ns -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')
 mongo_num=0
 mongo_master=""
 mongo_error=0
@@ -340,8 +344,8 @@ for mongo in $mongos; do
     else
         mongo_container=""
     fi
-    mongo_df=$(kubectl -n $zoo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $mongo_df -gt 70 ]] && error "Found MongoDB volume at ${mongo_df}% usage on $kafka"
+    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    [[ $mongo_df -gt $df_free ]] && error "Found MongoDB volume at ${mongo_df}% usage on $kafka"
     cur_mongo=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "db.serverStatus()" |mongo' 2>&1|grep  '"ismaster"')
     if [[  $cur_mongo =~ "true" ]];then
         echo "$mongo is master"
@@ -388,11 +392,7 @@ zoo_test(){
 # Zookeeper testing
 zoo_error=0
 echo "Testing Zookeeper pods"
-if [ -n "$namespace" ];then
-    zoo_ns=$namespace
-else
-    zoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)
-fi
+zoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)
 zoos=$(kubectl get pod -n $zoo_ns -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}')
 zoo_num=0
 zoo_leader=""
@@ -418,7 +418,7 @@ for zoo in $zoos; do
     fi
     zoo_num=$((zoo_num + 1));
     zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $zoo_df -gt 70 ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
+    [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
 done
 
 # This is a crude parse, but it will do.
@@ -464,7 +464,7 @@ else
     if [[ $con_kaf_num -gt 0 ]];then
         warn "Found $con_kaf_num connected Kafkas"
     else
-        error "Found $con_kaf_num connected Kafkas"
+        warn "Found no connected Kafkas"
     fi
 fi
 }
@@ -472,17 +472,13 @@ fi
 kafka_test(){
 #  testing
 echo "Testing Kafka pods"
-if [ -n "$namespace" ];then
-    kafka_ns=$namespace
-else
-    kafka_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}'|head -1)
-fi
+kafka_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}'|head -1)
 kafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}')
 kaf_num=0
 for kafka in $kafkas; do
     echo "Found Kafka Pod $kafka"
     kafka_df=$(kubectl -n $kafka_ns exec $kafka -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $kafka_df -gt 70 ]] && error "Found Kafka volume at ${kafka_df}% usage on $kafka"
+    [[ $kafka_df -gt $df_free ]] && error "Found Kafka volume at ${kafka_df}% usage on $kafka"
     kaf_num=$((kaf_num + 1));
 done
 [[ $kaf_num -gt 3 ]] && error "Found $kaf_num Kafka Pods $kafkas!!!" && kaf_error=1
@@ -507,11 +503,17 @@ if [[ $email -eq 0 ]];then
     [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=""
     #[ -z $TO ] && error "No TO address given!!!" && exit 1
     [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
-    [ -z $SUBJECT ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
-    #[ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
-    echo
+    [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
+    [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
-        if [[ $warnok -eq 0 && ${alwaysemail} -ne 0 || ${error} -eq 0 ]];then return 0;fi
+        if [[ $warnok -eq 0 ]];then
+            if [[ ${alwaysemail} -ne 0 ]];then
+                if [[ ${error} -eq 0 ]];then
+                    return 0
+                fi
+            fi
+        fi
+
         #Let's wait for the file to sync in case tee is buffered
         echo; echo; echo
         sleep 2
@@ -866,7 +868,10 @@ if [ ! -z $logfile ];then
     exec > >(tee -i $logfile)
 fi
 
-# Really you should be using ansible or the like run this, but not all customers have something like that setup.
+echo "$0 version $version"
+
+# Really you should be using ansible or the like to run this script.
+# That said not all customers have something ansible so we're going do it old school and ugly.
 if [[ $nossh -eq 1 ]];then
     if [[ ! -z $ssh_hosts ]];then
         for host in $ssh_hosts; do
@@ -875,6 +880,7 @@ if [[ $nossh -eq 1 ]];then
             echo
             echo
         done
+    # Should we break if this if fails?
     fi
 fi
     if [[ $run_local -eq 0 ]];then
@@ -882,10 +888,12 @@ fi
     fi
 
     if [[ $run_remote -eq 0 ]];then
+        kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
         remote_test
     fi
 
     if [[ $run_mongo -eq 0 ]];then
+        kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
         mongo_test
     fi
 
@@ -907,7 +915,10 @@ fi
         if [ $warnok != 0 ];then
             do_email
             exit 2
+        else
+            warn "Warnings are being ignored."
         fi
     fi
+    do_email
     echo -e  "\e[32mTesting completed without errors or warning\e[0m"
     exit 0
