@@ -43,7 +43,9 @@ if [[ ! $all_args == *--cluster* ]] ; then
         fi
     fi
 fi
+# Should we email by default?
 email=1
+# default sendemail NOT sendmail
 sendemail='ssilbory/sendemail'
 alwaysemail=1
 # Set this to fix local issues by default
@@ -52,7 +54,7 @@ fix_issues=1
 warnok=1
 #additional args for kubectl
 add_kubectl=""
-# required free space
+# required free space for nirmata ss pods
 df_free=80
 
 if [ -f /.dockerenv ]; then
@@ -134,7 +136,7 @@ helpfunction(){
 }
 
 # deal with args
-# This for loop is getting out of control it might be worth using getops or something.
+# Args are getting out of control it might be worth using getops or something.
 for i in "$@";do
     case $i in
         --version)
@@ -330,6 +332,7 @@ script_args=$(echo $script_args |sed 's/--ssh//')
 # shellcheck disable=SC2139
 alias kubectl="kubectl $add_kubectl "
 
+# Test mongodb pods
 mongo_test(){
 # mongo testing
 echo "Testing MongoDB Pods"
@@ -388,8 +391,8 @@ fi
 [ $mongo_error -eq 0 ] && good "MongoDB passed tests"
 }
 
-zoo_test(){
 # Zookeeper testing
+zoo_test(){
 zoo_error=0
 echo "Testing Zookeeper pods"
 zoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)
@@ -421,7 +424,7 @@ for zoo in $zoos; do
     [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
 done
 
-# This is a crude parse, but it will do.
+# Crude parse, but it will do for now.
 zkCli=$(kubectl exec $zoo -n $zoo_ns -- sh -c "ls /opt/zoo*/bin/zkCli.sh|head -1")
 connected_kaf=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | $zkCli")
 con_kaf_num=0
@@ -469,8 +472,8 @@ else
 fi
 }
 
+# testing kafka pods
 kafka_test(){
-#  testing
 echo "Testing Kafka pods"
 kafka_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}'|head -1)
 kafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka --no-headers | awk '{print $1}')
@@ -492,6 +495,7 @@ fi
 [[ $kaf_error -eq 0 ]] && good "Kafka passed tests"
 }
 
+#function to email results
 do_email(){
 if [[ $email -eq 0 ]];then
     if [ -e /certs/ ];then
@@ -499,9 +503,9 @@ if [[ $email -eq 0 ]];then
         update-ca-certificates
     fi
     [ -z $logfile ] && logfile="/tmp/k8_test.$$"
-    [ -z $EMAIL_USER ] && EMAIL_USER=""
-    [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=""
-    #[ -z $TO ] && error "No TO address given!!!" && exit 1
+    [ -z $EMAIL_USER ] && EMAIL_USER="" #would this ever work?
+    [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD="" #would this ever work?
+    #[ -z $TO ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
     [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
     [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
     [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
@@ -517,7 +521,7 @@ if [[ $email -eq 0 ]];then
         #Let's wait for the file to sync in case tee is buffered
         echo; echo; echo
         sleep 2
-        # Reformat the log file for better reading
+        # Reformat the log file for better reading and shell check can bite me.
         # shellcheck disable=SC1012
         BODY=$(sed -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" ${logfile})
         if type -P "sendEmail" &>/dev/null; then
@@ -534,6 +538,9 @@ if [[ $email -eq 0 ]];then
     fi
 fi
 }
+
+# Really this should be called cluster_test.  This is not the ssh code.
+# This tests the sanity of your k8 cluster
 remote_test(){
     command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'
     echo "Starting Cluster Tests"
@@ -667,6 +674,7 @@ spec:
 
 }
 
+# test if your local system can run k8
 local_test(){
 echo "Starting Local Tests"
 
@@ -762,6 +770,7 @@ fi
 
 
 #TODO check for proxy settings, how, what, why
+# Do we really need this has anyone complained?
 
 #test for docker
 if ! systemctl is-active docker &>/dev/null ; then
@@ -811,6 +820,7 @@ fi
 
 }
 
+# Test nirmata agent for nirmata built clusters
 test_agent(){
 echo Test Nirmata Agent
 if systemctl is-active nirmata-agent &>/dev/null ; then
@@ -870,8 +880,8 @@ fi
 
 echo "$0 version $version"
 
-# Really you should be using ansible or the like to run this script.
-# That said not all customers have something ansible so we're going do it old school and ugly.
+# Really you should be using ansible or the like to run this script remotely.
+# That said not all customers have something like ansible so we're going do it old school and ugly.
 if [[ $nossh -eq 1 ]];then
     if [[ ! -z $ssh_hosts ]];then
         for host in $ssh_hosts; do
@@ -881,8 +891,12 @@ if [[ $nossh -eq 1 ]];then
             echo
         done
     # Should we break if this if fails?
+    # What about return codes?  
     fi
 fi
+
+# hmm why is this indented?? something leftover
+#TODO fix this indent
     if [[ $run_local -eq 0 ]];then
         local_test
     fi
