@@ -1,27 +1,29 @@
 #!/bin/bash
 # shellcheck disable=SC1117,SC2086,SC2001
 
-# This might be better done in python or ruby, but we can't really depend on those existing or having useful modules.
+# This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
 
-version=1.0.1
+version=1.0.2
 #default external dns target
 DNSTARGET=nirmata.com
+#default service target
 SERVICETARGET=kubernetes.default.svc.cluster.local
 # set to zero to default to all namespaces
 allns=1
 # set to zero to default to curl url
 curl=1
-# Default namespace
+# Default namespace for nirmata services
 namespace="nirmata"
 # Should we continue to execute on failure
 CONTINUE="yes"
 # Set to yes to be quieter
 QUIET="no"
-# set to 1 to disable local tests to 0
+# set to 1 to disable local tests, this tests K8 compatiblity of local system
 run_local=1
-# set to 1 to disable remote tests to 0
+# set to 1 to disable remote tests, this tests k8 functionality via kubectl
 run_remote=1
-# These are used to run the mongo, zookeeper, and kafka tests by default.
+# These are used to run the mongo, zookeeper, and kafka tests by default to test the nrimata setup.
+# Maybe we should fork this script to move the nirmata tests else where?
 run_mongo=1
 run_zoo=1
 run_kafka=1
@@ -29,7 +31,9 @@ run_kafka=1
 export error=0
 # Did we get a warning?
 export warn=0
+# Default to not using ssh
 nossh=0
+# Collect our script args
 script_args=""
 # shellcheck disable=SC2124
 all_args="$@"
@@ -37,6 +41,7 @@ all_args="$@"
 if [[ ! $all_args == *--cluster* ]] ; then
     if [[ ! $all_args == *--local* ]] ; then
         if [[ ! $all_args == *--nirmata* ]] ; then
+            # default to testing nirmata
             run_mongo=0
             run_zoo=0
             run_kafka=0
@@ -45,16 +50,16 @@ if [[ ! $all_args == *--cluster* ]] ; then
 fi
 # Should we email by default?
 email=1
-# default sendemail NOT sendmail
+# default sendemail containers Note NOT sendmail!
 sendemail='ssilbory/sendemail'
 alwaysemail=1
 # Set this to fix local issues by default
 fix_issues=1
-# warnings return 2
+# warnings return 2 otherwise
 warnok=1
 #additional args for kubectl
 add_kubectl=""
-# required free space for nirmata ss pods
+# required free space for nirmata pods
 df_free=80
 
 if [ -f /.dockerenv ]; then
@@ -69,6 +74,7 @@ error(){
     # shellcheck disable=SC2145
     echo -e "\e[31m${@}\e[0m"
     if [ "$CONTINUE" = "no" ];then
+        # THIS EXITS THE SCRIPT
         echo -e "\e[31mContinue is not set exiting on error!\e[0m"
        namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
        for ns in $namespaces;do
@@ -327,7 +333,7 @@ for i in "$@";do
         ;;
     esac
 done
-# We don't ever want to pass --ssh!!!
+# We don't ever want to pass --ssh to ssh!!!
 script_args=$(echo $script_args |sed 's/--ssh//')
 # shellcheck disable=SC2139
 alias kubectl="kubectl $add_kubectl "
@@ -339,7 +345,10 @@ echo "Testing MongoDB Pods"
 mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
 mongos=$(kubectl get pod --namespace=$mongo_ns -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')
 mongo_num=0
+# The mongo master (or masters ?!!?)
 mongo_master=""
+# Number of masters (ideally one)
+mongo_masters=0
 mongo_error=0
 for mongo in $mongos; do
     if kubectl -n $mongo_ns get pod $mongo --no-headers |awk '{ print $2 }' |grep -q '[0-2]/2'; then
@@ -353,11 +362,12 @@ for mongo in $mongos; do
     if [[  $cur_mongo =~ "true" ]];then
         echo "$mongo is master"
         mongo_master="$mongo_master $mongo"
+        mongo_masters=$((mongo_masters+ 1));
     else
         if [[  $cur_mongo =~ "false" ]];then
             echo "$mongo is a slave"
         else
-            error "$mongo is in error (not master or slave)"
+            warn "$mongo is not master or slave! (Are we standalone?)"
             mongo_error=1
             kubectl -n $mongo_ns get pod $mongo --no-headers -o wide
         fi
@@ -372,21 +382,27 @@ for mongo in $mongos; do
     fi
 done
 if [[ $mongo_num -gt 3 ]];then
-    error "Found $mongo_num Mongo Pods $mongos!!!"
+    error "Found $mongo_num Mongo Pods $mongos!!"
     mongo_error=1
 fi
 if [[ $mongo_num -eq 0 ]];then
-    error "Found Mongo Pods $mongo_num!!!" && mongo_error=1
+    error "Found Mongo Pods $mongo_num!!" && mongo_error=1
 else
-    [[ $mongo_num -lt 3 ]] && warn "Found $mongo_num Mongo Pod"  && mongo_error=1
+    [[ $mongo_num -lt 3 ]] && warn "Found $mongo_num Mongo Pods"  && mongo_error=1
 fi
-if [ -z $mongo_master ]; then
-    error "No Mongo Master found!!"
-    mongo_error=1
-fi
-if [[ $(echo $mongo_master|wc -w) -gt 1 ]];then
-    error "Mongo Masters $mongo_master found!!"
-    mongo_error=1
+
+if [[ $mongo_masters -lt 1 ]]; then
+    if [[ $mongo_num -eq 1 ]];then
+	    warn "No Mongo Master found!! (Assuming standalone)"
+    else
+        error "No Mongo Master found with multiple mongo nodes!!"
+        mongo_error=1
+    fi
+else
+    if [[ $mongo_masters -gt 1 ]];then
+        error "Found $mongo_masters masters: $mongo_master!!"
+        mongo_error=1
+    fi
 fi
 [ $mongo_error -eq 0 ] && good "MongoDB passed tests"
 }
@@ -401,6 +417,12 @@ zoo_num=0
 zoo_leader=""
 for zoo in $zoos; do
     curr_zoo=$(kubectl -n $zoo_ns exec $zoo -- sh -c "/opt/zookeeper-*/bin/zkServer.sh status" 2>&1|grep Mode)
+    zoo_node_count=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo srvr | nc localhost 2181|grep Node.count:" |awk '{ print $3; }')
+    if [ $zoo_node_count -lt 50000 ];then
+        echo $zoo node count is $zoo_node_count
+    else
+        error Error $zoo node count is $zoo_node_count
+    fi
     if [[  $curr_zoo =~ "leader" ]];then
         echo "$zoo is zookeeper leader"
         zoo_leader="$zoo_leader $zoo"
@@ -409,10 +431,10 @@ for zoo in $zoos; do
             echo "$zoo is zookeeper follower"
         else
             if [[  $curr_zoo =~ "standalone" ]];then
-                echo "$zoo is zookeeper standalone"
+                warn "$zoo is zookeeper standalone!"
                 zoo_leader="$zoo_leader $zoo"
             else
-                error "$zoo appears to have failed. (not follower/leader/standalone)"
+                error "$zoo appears to have failed!! (not follower/leader/standalone)"
                 kubectl -n $zoo_ns get pod $zoo --no-headers -o wide
                 zoo_error=1
             fi
@@ -421,13 +443,14 @@ for zoo in $zoos; do
     fi
     zoo_num=$((zoo_num + 1));
     zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo"
+    [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo!!"
 done
 
 # Crude parse, but it will do for now.
 zkCli=$(kubectl exec $zoo -n $zoo_ns -- sh -c "ls /opt/zoo*/bin/zkCli.sh|head -1")
 connected_kaf=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | $zkCli")
 con_kaf_num=0
+# What was I thinking here?
 # shellcheck disable=SC2076
 if [[ $connected_kaf =~ '[0, 1, 2]' ]];then
     con_kaf_num=3
@@ -442,7 +465,7 @@ if [[ $connected_kaf =~ '[0]' ]];then
 fi
 
 if [[ $zoo_num -gt 3 ]];then
-    error "Found $zoo_num Zookeeper Pods $zoos!!!"
+    error "Found $zoo_num Zookeeper Pods $zoos!!"
     zoo_error=1
 fi
 if [[ $zoo_num -eq 0 ]];then
@@ -456,7 +479,7 @@ if [ -z $zoo_leader ];then
     zoo_error=1
 fi
 if [[ $(echo $zoo_leader|wc -w) -gt 1 ]];then
-    warn "Found Zookeeper Leaders $zoo_leader."
+    warn "Found Zookeeper Leaders $zoo_leader!"
     zoo_error=1
 fi
 [ $zoo_error -eq 0 ] && good "Zookeeper passed tests"
@@ -465,9 +488,9 @@ if [[ $con_kaf_num -eq 3 ]];then
     good "Found 3 connected Kafkas"
 else
     if [[ $con_kaf_num -gt 0 ]];then
-        warn "Found $con_kaf_num connected Kafkas"
+        warn "Found $con_kaf_num connected Kafkas!"
     else
-        warn "Found no connected Kafkas"
+        warn "Found no connected Kafkas!"
     fi
 fi
 }
@@ -498,6 +521,7 @@ fi
 #function to email results
 do_email(){
 if [[ $email -eq 0 ]];then
+    # Check for certs in the cronjob's container
     if [ -e /certs/ ];then
         cp -f /certs/*.crt /usr/local/share/ca-certificates/
         update-ca-certificates
@@ -509,6 +533,7 @@ if [[ $email -eq 0 ]];then
     [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
     [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
     [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
+    # This needs to be redone
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
         if [[ $warnok -eq 0 ]];then
             if [[ ${alwaysemail} -ne 0 ]];then
@@ -539,9 +564,8 @@ if [[ $email -eq 0 ]];then
 fi
 }
 
-# Really this should be called cluster_test.  This is not the ssh code.
 # This tests the sanity of your k8 cluster
-remote_test(){
+cluster_test(){
     command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'
     echo "Starting Cluster Tests"
     # Setup a DaemonSet to test dns on all nodes.
@@ -565,15 +589,13 @@ spec:
             kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
     done
     kubectl --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
-    #echo allns is $allns
-    if [ $allns != 1 ];then
-        for ns in $namespaces;do
-            kubectl --namespace=$ns apply -f /tmp/nirmata-net-test-all.yml &>/dev/null
-        done
-    else
+
+    if [ $allns -eq 1 ];then
         namespaces=$namespace
-        kubectl --namespace=$namespace apply -f /tmp/nirmata-net-test-all.yml &>/dev/null
     fi
+    for ns in $namespaces;do
+        kubectl --namespace=$ns apply -f /tmp/nirmata-net-test-all.yml &>/dev/null
+    done
     #echo Testing namespaces $namespaces
 
     #check for nodes, and kubectl function
@@ -683,12 +705,14 @@ if [[ $(swapon -s | wc -l) -gt 1 ]] ;  then
     if [[ $fix_issues -eq 0 ]];then
         warn "Found swap enabled"
         echo "Applying the following fixes"
-        ech 'swapoff -a'
+        echo 'swapoff -a'
         swapoff -a
         echo "sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab"
         sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab
     else
         error "Found swap enabled!"
+        echo Consider if you are having issues:
+        echo "sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab"
     fi
 fi
 
@@ -749,6 +773,8 @@ if [ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ];then
         echo '  modprobe br_netfilter'
         echo '  echo "br_netfilter" > /etc/modules-load.d/br_netfilter.conf'
     fi
+else
+    good bridge-nf-call-iptables module loaded
 fi
 if grep -q 0 /proc/sys/net/bridge/bridge-nf-call-iptables;then
     if [[ $fix_issues -eq 0 ]];then
@@ -783,40 +809,38 @@ else
         good Docker is active
     fi
 fi
-if type kubelet &>/dev/null;then
-    #test for k8 service
-    echo Found kubelet running local kubernetes tests
-    if ! systemctl is-active kubelet &>/dev/null;then
-        error 'Kubelet is not active?'
-    else
-        good Kublet is active
-    fi
-    if ! systemctl is-enabled kubelet &>/dev/null;then
-        if [[ $fix_issues -eq 0 ]];then
-            echo "Applying the following fixes"
-            echo systectl enable kubelet
-            systectl enable kubelet
-        else
-            error 'Kubelet is not set to run at boot?'
-        fi
-    else
-        good Kublet is enabled at boot
-    fi
+
+if [ -e /etc/systemd/system/nirmata-agent.service ];then
+    echo Found nirmata-agent.service testing Nirmata agent
+    test_agent
 else
-    if [ -e /etc/systemd/system/nirmata-agent.service ];then
-        echo Found nirmata-agent.service testing Nirmata agent
-        test_agent
+    if type kubelet &>/dev/null;then
+        #test for k8 service
+        echo Found kubelet running local kubernetes tests
+        if ! systemctl is-active kubelet &>/dev/null;then
+            error 'Kubelet is not active?'
+        else
+            good Kublet is active
+        fi
+        if ! systemctl is-enabled kubelet &>/dev/null;then
+            if [[ $fix_issues -eq 0 ]];then
+                echo "Applying the following fixes"
+                echo systectl enable kubelet
+                systectl enable kubelet
+            else
+                error 'Kubelet is not set to run at boot?'
+            fi
+        else
+            good Kublet is enabled at boot
+        fi
     else
         error No Kubelet or Nirmata Agent!!!
     fi
-fi
     if [ ! -e /opt/cni/bin/bridge ];then
         warn '/opt/cni/bin/bridge not found is your CNI installed?'
     fi
-
-if [ ! -e /opt/cni/bin/bridge ];then
-    warn '/opt/cni/bin/bridge not found is your CNI installed?'
 fi
+
 
 }
 
@@ -853,8 +877,9 @@ if docker ps |grep -q -e /opt/bin/flanneld ;then
 else
     error Flanneld is not running!
 fi
-# How do we determine if this is the master?
-#grep -e /usr/local/bin/etcd -e /nirmata-kube-controller -e /metrics-server -e "hyperkube apiserver"
+# How do we determine if this is a master?
+#maybe grep -e /usr/local/bin/etcd -e /nirmata-kube-controller -e /metrics-server -e "hyperkube apiserver"
+#Are we sure these run only on the master?
 #if docker ps |grep -q -e nirmata/nirmata-kube-controller;then
 #    good Found nirmata-kube-controller
 #else
@@ -874,7 +899,7 @@ if [[ $email -eq 0 ]];then
         logfile="/tmp/k8_test.$$"
     fi
 fi
-if [ ! -z $logfile ];then
+if [[ -n $logfile ]];then
     exec > >(tee -i $logfile)
 fi
 
@@ -883,7 +908,7 @@ echo "$0 version $version"
 # Really you should be using ansible or the like to run this script remotely.
 # That said not all customers have something like ansible so we're going do it old school and ugly.
 if [[ $nossh -eq 1 ]];then
-    if [[ ! -z $ssh_hosts ]];then
+    if [[ -n $ssh_hosts ]];then
         for host in $ssh_hosts; do
             echo Testing host $host
             cat $0 | ssh $host bash -c "cat >/tmp/k8_test_temp.sh ; chmod 755 /tmp/k8_test_temp.sh; /tmp/k8_test_temp.sh $script_args --nossh ; rm /tmp/k8_test_temp.sh"
@@ -891,48 +916,56 @@ if [[ $nossh -eq 1 ]];then
             echo
         done
     # Should we break if this if fails?
-    # What about return codes?  
+    # What about return codes?
     fi
 fi
 
-# hmm why is this indented?? something leftover
-#TODO fix this indent
-    if [[ $run_local -eq 0 ]];then
-        local_test
-    fi
+# Actually run tests
 
-    if [[ $run_remote -eq 0 ]];then
-        kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
-        remote_test
-    fi
+#tests local system for compatiblity
+if [[ $run_local -eq 0 ]];then
+    local_test
+fi
 
-    if [[ $run_mongo -eq 0 ]];then
-        kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
-        mongo_test
-    fi
+# test kubernetes cluster
+if [[ $run_remote -eq 0 ]];then
+    kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
+    cluster_test
+fi
 
-    if [[ $run_zoo -eq 0 ]];then
-        zoo_test
-    fi
+#This tests nirmata's mongodb
+if [[ $run_mongo -eq 0 ]];then
+    kubectl get namespace $namespace >/dev/null || error "Can not find namespace $namespace tests may fail!!!"
+    mongo_test
+fi
 
-    if [[ $run_kafka -eq 0 ]];then
-        kafka_test
-    fi
+#This tests nirmata's zookeeper
+if [[ $run_zoo -eq 0 ]];then
+    zoo_test
+fi
 
-    if [ $error != 0 ];then
-        error "Test completed with errors!"
-        do_email
-        exit $error
-    fi
-    if [ $warn != 0 ];then
-        warn "Test completed with warnings."
-        if [ $warnok != 0 ];then
-            do_email
-            exit 2
-        else
-            warn "Warnings are being ignored."
-        fi
-    fi
+#This tests nirmata's kafka (needs work, but Kafka only seems to have issues when zk does)
+if [[ $run_kafka -eq 0 ]];then
+    kafka_test
+fi
+
+if [ $error != 0 ];then
+    error "Test completed with errors!"
     do_email
-    echo -e  "\e[32mTesting completed without errors or warning\e[0m"
-    exit 0
+    exit $error
+fi
+if [ $warn != 0 ];then
+    warn "Test completed with warnings."
+    if [ $warnok != 0 ];then
+        do_email
+        exit 2
+    else
+        warn "Warnings are being ignored."
+        echo -e  "\e[32mTesting completed without errors\e[0m"
+        do_email
+        exit 0
+    fi
+fi
+echo -e  "\e[32mTesting completed without errors or warning\e[0m"
+do_email
+exit 0

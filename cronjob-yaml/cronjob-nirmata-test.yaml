@@ -4,12 +4,12 @@ kind: "CronJob"
 spec:
   concurrencyPolicy: "Allow"
   suspend: false
-  successfulJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 1
   schedule: "* * * * * "
-  failedJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 2 
+      backoffLimit: 0 
       parallelism: 1
       completions: 1
       template:
@@ -45,11 +45,11 @@ spec:
             - "--to"
             - "sam@nirmata.com"
             - "--smtp"
-            - "smtp.gmail.com:587"
+            - "smtp.nirmata.com:587"
             - "--from"
-            - "sam.flory@gmail.com"
+            - "sam@nirmata.com"
             - "--user"
-            - "sam.flory"
+            - "sam"
             - "--passwd"
             - "foo"
             - "--subject"
