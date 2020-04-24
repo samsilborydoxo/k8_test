@@ -17,3 +17,11 @@ You will also need access to the ssilbory/nirmata-test image defined in the yaml
 
 *Ideally this kubeconfig file should be a limited role granting access only to the nirmata namespace.
 https://kubernetes.io/docs/reference/access-authn-authz/authorization/
+
+
+See cronjob-yaml for an example K8 cronjob implimentation.  You should be able to install it with "kubectl -n nirmata apply -f cronjob-yaml".  
+
+Note that you will need to change the namespace in the above command and the yaml files in cronjob-yaml.  Also you need to edit the cronjob-yaml/cronjob-nirmata-test.yaml file
+- to use the right smtp server
+- to use your email addresseses
+- remove --always-email once you are sure things work
