@@ -3,7 +3,7 @@
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
 
-version=1.0.2
+version=1.0.3
 #default external dns target
 DNSTARGET=nirmata.com
 #default service target
@@ -61,6 +61,8 @@ warnok=1
 add_kubectl=""
 # required free space for nirmata pods
 df_free=80
+# mongo seems to run out of space more easily during syncs
+df_free_mongo=50
 
 if [ -f /.dockerenv ]; then
     export INDOCKER=0
@@ -98,6 +100,14 @@ good(){
         echo -e "\e[32m${@}\e[0m"
     fi
 }
+
+echo_cmd(){
+        # shellcheck disable=SC2145
+        echo "${@}"
+        # shellcheck disable=SC2068
+        ${@}
+}
+
 helpfunction(){
     echo "Note that this script requires access to the following containers:"
     echo "nicolaka/netshoot for cluster tests."
@@ -268,7 +278,7 @@ for i in "$@";do
         ;;
         --to)
             script_args=" $script_args $1 $2 "
-            TO=$2
+            TO="$2 $TO"
             shift
             shift
         ;;
@@ -356,8 +366,6 @@ for mongo in $mongos; do
     else
         mongo_container=""
     fi
-    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $mongo_df -gt $df_free ]] && error "Found MongoDB volume at ${mongo_df}% usage on $kafka"
     cur_mongo=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "db.serverStatus()" |mongo' 2>&1|grep  '"ismaster"')
     if [[  $cur_mongo =~ "true" ]];then
         echo "$mongo is master"
@@ -372,6 +380,11 @@ for mongo in $mongos; do
             kubectl -n $mongo_ns get pod $mongo --no-headers -o wide
         fi
     fi
+    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    [[ $mongo_df -gt $df_free_mongo ]] && (error "Found MongoDB volume at ${mongo_df}% usage on $mongo" ; \
+        kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G' )
+    kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
+        warn "WiredTiger lookaside file is very large on $mongo. Consider increasing Mongodb memory."
     mongo_num=$((mongo_num + 1));
     mongo_stateStr=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo' 2>&1 |grep stateStr)
     if [[ $mongo_stateStr =~ RECOVERING || $mongo_stateStr =~ DOWN || $mongo_stateStr =~ STARTUP ]];then
@@ -547,19 +560,21 @@ if [[ $email -eq 0 ]];then
         echo; echo; echo
         sleep 2
         # Reformat the log file for better reading and shell check can bite me.
-        # shellcheck disable=SC1012
+        # shellcheck disable=SC1012,SC2028,SC2116
         BODY=$(sed -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" ${logfile})
-        if type -P "sendEmail" &>/dev/null; then
-            if [ -n "$PASSWORD" ];then
-                echo $BODY |sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
+        for email_to in $TO; do
+            if type -P "sendEmail" &>/dev/null; then
+                if [ -n "$PASSWORD" ];then
+                    echo $BODY |sendEmail -t "$email_to" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
+                else
+                    echo $BODY |sendEmail -t "$email_to" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
+                fi
             else
-                echo $BODY |sendEmail -t "$TO" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
+                docker run $sendemail $email_to $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
             fi
-        else
-            docker run $sendemail $TO $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
-        fi
-        #If they named it something else don't delete
-        rm -f /tmp/k8_test.$$
+            #If they named it something else don't delete
+            rm -f /tmp/k8_test.$$
+        done
     fi
 fi
 }
@@ -700,42 +715,43 @@ spec:
 local_test(){
 echo "Starting Local Tests"
 
-echo "Checking for swap"
+# Kubelet generally won't run if swap is enabled.
 if [[ $(swapon -s | wc -l) -gt 1 ]] ;  then
     if [[ $fix_issues -eq 0 ]];then
         warn "Found swap enabled"
-        echo "Applying the following fixes"
-        echo 'swapoff -a'
-        swapoff -a
-        echo "sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab"
-        sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab
+        echo_cmd swapoff -a
+        echo_cmd sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab
     else
         error "Found swap enabled!"
         echo Consider if you are having issues:
         echo "sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab"
     fi
+  else
+    good No swap found
 fi
 
-echo "Testing SELinux"
+# It's possible to run docker with selinux, but we don't support that.
 if type sestatus &>/dev/null;then
     if ! sestatus | grep "Current mode" |grep -e permissive -e disabled;then
         warn 'SELinux enabled'
         if [[ $fix_issues -eq 0 ]];then
             echo "Applying the following fixes"
-            echo '  sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config'
-            sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config
-            echo '  setenforce 0'
-            setenforce 0
+            echo_cmd sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config
+            echo_cmd setenforce 0
         else
             echo Consider the following changes to disabled SELinux if you are having issues:
             echo '  sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config'
             echo '  setenforce 0'
         fi
+    else
+      good Selinux not enforcing
     fi
 else
-    #assuming debian/ubuntu don't do selinux
+    #Assuming debian/ubuntu don't do selinux if no sestatus binary
     if [ -e /etc/os-release ]  &&  ! grep -q -i -e debian -e ubuntu /etc/os-release;then
         warn 'sestatus binary not found assuming SELinux is disabled.'
+    else
+      good "No Selinux found"
     fi
 fi
 
@@ -744,10 +760,8 @@ if grep -q 0 /proc/sys/net/ipv4/ip_forward;then
         if [[ $fix_issues -eq 0 ]];then
             warn net.ipv4.ip_forward is set to 0
             echo "Applying the following fixes"
-            echo '  sysctl -w net.ipv4.ip_forward=1'
-            sysctl -w net.ipv4.ip_forward=1
-            echo '  echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf'
-            echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf
+            echo_cmd sysctl -w net.ipv4.ip_forward=1
+            echo_cmd echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf
         else
             error net.ipv4.ip_forward is set to 0
             echo Consider the following changes:
@@ -758,14 +772,13 @@ else
     good ip_forward enabled
 fi
 
+#check for br netfilter
 if [ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ];then
     if [[ $fix_issues -eq 0 ]];then
         warn '/proc/sys/net/bridge/bridge-nf-call-iptables does not exist!'
         echo "Applying the following fixes"
-        echo '  modprobe br_netfilter'
-        modprobe br_netfilter
-        echo '  echo "br_netfilter" > /etc/modules-load.d/br_netfilter.conf'
-        echo "br_netfilter" > /etc/modules-load.d/br_netfilter.conf
+        echo_cmd modprobe br_netfilter
+        echo_cmd echo "br_netfilter" > /etc/modules-load.d/br_netfilter.conf
     else
         error '/proc/sys/net/bridge/bridge-nf-call-iptables does not exist!'
         echo 'Is the br_netfilter module loaded? "lsmod |grep br_netfilter"'
@@ -780,10 +793,8 @@ if grep -q 0 /proc/sys/net/bridge/bridge-nf-call-iptables;then
     if [[ $fix_issues -eq 0 ]];then
         warn "Bridge netfilter disabled!!"
         echo "Applying the following fixes"
-        echo '  sysctl -w net.bridge.bridge-nf-call-iptables=1'
-        sysctl -w net.bridge.bridge-nf-call-iptables=1
-        echo '  echo net.bridge.bridge-nf-call-iptables=1 >> /etc/sysctl.conf'
-        echo net.bridge.bridge-nf-call-iptables=1 >> /etc/sysctl.conf
+        echo_cmd sysctl -w net.bridge.bridge-nf-call-iptables=1
+        echo_cmd echo net.bridge.bridge-nf-call-iptables=1 >> /etc/sysctl.conf
     else
         error "Bridge netfilter disabled!!"
         echo Consider the following changes:
@@ -801,22 +812,96 @@ fi
 #test for docker
 if ! systemctl is-active docker &>/dev/null ; then
     warn 'Docker service is not active? Maybe you are using some other CRI??'
-else
-    if docker info 2>/dev/null|grep mountpoint;then
-        warn 'Docker does not have its own mountpoint'
-        # What is the fix for this???
-    else
-        good Docker is active
+    if [[ $fix_issues -eq 0 ]];then
+     echo_cmd sudo systemctl start docker
     fi
+  else
+    good Docker is running
 fi
 
+if ! systemctl is-enabled docker &>/dev/null;then
+    warn 'Docker service is starting at boot. Maybe you are using some other CRI??'
+    if [[ $fix_issues -eq 0 ]];then
+     echo_cmd sudo systemctl enable docker
+    fi
+  else
+    good Docker is starting at boot
+fi
+
+if docker info 2>/dev/null|grep mountpoint;then
+  warn 'Docker does not have its own mountpoint'
+  # What is the fix for this??? How does this happen I've never seen it.
+fi
+
+# Is the version of docker locked/held if not we are going to suffer death by upgrade.
+if [ -e /usr/bin/docker ];then
+   dockerpkg=$(dpkg -S /usr/bin/docker |awk '{print $1}' |sed 's/:$//')
+else
+  error no /usr/bin/docker
+fi
+if [ -e /usr/bin/dpkg ];then
+  if [[ $dockerpkg =~ docker.io ]];then
+    if  sudo apt-mark showhold |grep -q docker.io; then
+      good docker.io package held
+    else
+       warn docker.io package is not held
+       if [[ $fix_issues -eq 0 ]];then
+         echo_cmd sudo apt-mark hold docker.io
+       fi
+    fi
+  else
+    if [[ $dockerpkg =~ docker-ce ]];then
+      if  sudo apt-mark showhold |grep -q docker-ce; then
+        good docker-ce package held
+      else
+        warn docker-ce package is not held
+        if [[ $fix_issues -eq 0 ]];then
+          echo_cmd sudo apt-mark hold docker-ce
+        fi
+      fi
+    fi
+  fi
+else
+  if [ -e /usr/bin/rpm ];then
+    if yum versionlock list |grep -q docker-ce;then
+      good docker versionlocked
+    else
+      warn docker is not versionlocked
+      if [[ $fix_issues -eq 0 ]];then
+        echo_cmd sudo yum versionlock docker-ce
+      fi
+    fi
+  fi
+fi
+
+#Customers often have time issues, which can cause cert issues.  Ex:cert is in future.
+if type chronyc &>/dev/null;then
+  if chronyc activity |grep -q "^0 sources online";then
+    warn "Chrony found, but no ntp sources reported!"
+  else
+    good Found Chrony with valid ntp sources.
+  fi
+else
+  if type ntpq &>/dev/null;then
+    if ntpq -c rv |grep -q 'leap=00,'; then
+      good Found ntp and we appear to be syncing.
+    else
+      warn "Found ntp client, but it appears to not be synced"
+    fi
+  else
+    warn "No ntp client found!!"
+  fi
+fi
+
+# Are we running the agent or kubelet?
 if [ -e /etc/systemd/system/nirmata-agent.service ];then
     echo Found nirmata-agent.service testing Nirmata agent
     test_agent
 else
     if type kubelet &>/dev/null;then
         #test for k8 service
-        echo Found kubelet running local kubernetes tests
+        echo Found kubelet binary running local kubernetes tests
+        echo -e "\e[33mNote if you plan on running the Nirmata agent remove this kubelet!!! \nIf this kubelet is running it will prevent Nirmata's kubelet from running. \e[0m"
         if ! systemctl is-active kubelet &>/dev/null;then
             error 'Kubelet is not active?'
         else
@@ -831,7 +916,7 @@ else
                 error 'Kubelet is not set to run at boot?'
             fi
         else
-            good Kublet is enabled at boot
+          good Kublet is enabled at boot
         fi
     else
         error No Kubelet or Nirmata Agent!!!
@@ -911,6 +996,8 @@ if [[ $nossh -eq 1 ]];then
     if [[ -n $ssh_hosts ]];then
         for host in $ssh_hosts; do
             echo Testing host $host
+            # No shellcheck this cat is not useless
+            # shellcheck disable=SC2002
             cat $0 | ssh $host bash -c "cat >/tmp/k8_test_temp.sh ; chmod 755 /tmp/k8_test_temp.sh; /tmp/k8_test_temp.sh $script_args --nossh ; rm /tmp/k8_test_temp.sh"
             echo
             echo
