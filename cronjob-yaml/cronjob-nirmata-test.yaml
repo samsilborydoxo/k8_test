@@ -5,7 +5,7 @@ spec:
   concurrencyPolicy: "Allow"
   suspend: false
   successfulJobsHistoryLimit: 1
-  schedule: "* * * * * "
+  schedule: "@hourly"
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:

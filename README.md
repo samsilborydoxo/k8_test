@@ -1,15 +1,15 @@
 This is the Nirmata test script.  It will check either your nirmata install, local system for Kubernetes compatiblity, or perform a basic health check of your kubernetes cluster.
 
-It has 2 basic modes:  
-
-Local testing:  
-./nirmata_test.sh --local
-
-Cluster testing (requires working kubectl):  
-./nirmata_test.sh --cluster  
+It has 3 basic modes:  
 
 Test Nirmata application (default)  
 ./nirmata_test.sh --nirmata
+
+Test local node for Nirmata Agent compatiblity:  
+./nirmata_test.sh --local
+
+Cluster testing (requires working kubectl config):  
+./nirmata_test.sh --cluster  
 
 There are also a host of other features such as email support, and ssh support.  See --help for more info.
 
@@ -39,6 +39,7 @@ Found kubelet running local kubernetes tests
 Kublet is active
 Kublet is enabled at boot
 Testing completed without errors or warning
+
 root@silbory-nirmata0:~# ~nirmata/nirmata_test.sh --cluster
 Starting Cluster Tests
 
@@ -68,8 +69,6 @@ Test Nirmata Agent
 Nirmata Agent is running
 Nirmata Agent is enabled at boot
 Found nirmata-host-agent
-Found nirmata-kube-controller
-Found Metrics container
 Testing completed without errors or warning
 ```
 
