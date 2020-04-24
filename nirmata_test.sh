@@ -3,7 +3,7 @@
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
 
-version=1.0.3
+version=1.0.4
 #default external dns target
 DNSTARGET=nirmata.com
 #default service target
@@ -74,7 +74,7 @@ fi
 error(){
     error=1
     # shellcheck disable=SC2145
-    echo -e "\e[31m${@}\e[0m"
+    echo -e "\e[31mError: ${@}\e[0m"
     if [ "$CONTINUE" = "no" ];then
         # THIS EXITS THE SCRIPT
         echo -e "\e[31mContinue is not set exiting on error!\e[0m"
@@ -91,13 +91,13 @@ error(){
 warn(){
     warn=1
     # shellcheck disable=SC2145
-    echo -e "\e[33m${@}\e[0m"
+    echo -e "\e[33mWarn: ${@}\e[0m"
 }
 #function to print green text
 good(){
     if [ ! "$QUIET" = "yes" ];then
         # shellcheck disable=SC2145
-        echo -e "\e[32m${@}\e[0m"
+        echo -e "\e[32mGOOD: ${@}\e[0m"
     fi
 }
 

@@ -2,7 +2,7 @@ apiVersion: v1
 data:
   nirmata_test.sh: "#!/bin/bash\n# shellcheck disable=SC1117,SC2086,SC2001\n\n# This
     might be better done in python or ruby, but we can't really depend on those existing
-    or having useful modules on customer sites or containers.\n\nversion=1.0.3\n#default
+    or having useful modules on customer sites or containers.\n\nversion=1.0.4\n#default
     external dns target\nDNSTARGET=nirmata.com\n#default service target\nSERVICETARGET=kubernetes.default.svc.cluster.local\n#
     set to zero to default to all namespaces\nallns=1\n# set to zero to default to
     curl url\ncurl=1\n# Default namespace for nirmata services\nnamespace=\"nirmata\"\n#
@@ -25,27 +25,27 @@ data:
     mongo seems to run out of space more easily during syncs\ndf_free_mongo=50\n\nif
     [ -f /.dockerenv ]; then\n    export INDOCKER=0\nelse\n    export INDOCKER=1\nfi\n\n#function
     to print red text\nerror(){\n    error=1\n    # shellcheck disable=SC2145\n    echo
-    -e \"\\e[31m${@}\\e[0m\"\n    if [ \"$CONTINUE\" = \"no\" ];then\n        # THIS
-    EXITS THE SCRIPT\n        echo -e \"\\e[31mContinue is not set exiting on error!\\e[0m\"\n
-    \      namespaces=\"$(kubectl get ns  --no-headers | awk '{print $1}')\"\n       for
-    ns in $namespaces;do\n          kubectl --namespace=$ns delete ds nirmata-net-test-all
-    --ignore-not-found=true &>/dev/null\n        done\n        kubectl --namespace=$namespace
-    delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n        #
-    THIS EXITS THE SCRIPT\n        exit 1\n    fi\n}\n#function to print yellow text\nwarn(){\n
-    \   warn=1\n    # shellcheck disable=SC2145\n    echo -e \"\\e[33m${@}\\e[0m\"\n}\n#function
-    to print green text\ngood(){\n    if [ ! \"$QUIET\" = \"yes\" ];then\n        #
-    shellcheck disable=SC2145\n        echo -e \"\\e[32m${@}\\e[0m\"\n    fi\n}\n\necho_cmd(){\n
-    \       # shellcheck disable=SC2145\n        echo \"${@}\"\n        # shellcheck
-    disable=SC2068\n        ${@}\n}\n\nhelpfunction(){\n    echo \"Note that this
-    script requires access to the following containers:\"\n    echo \"nicolaka/netshoot
-    for cluster tests.\"\n    echo \"ssilbory/sendemail for sending email.\"\n    echo
-    \"Usage: $0\"\n    echo \"--version                   Reports version ($version)\"\n
-    \   echo \"--allns                     Test all namespaces (Default is only \\\"$namespace\\\")\"\n
-    \   echo '--dns-target dns.name       (Default nirmata.com)'\n    #echo '--exit
-    \                    Exit on errors'\n    echo '--https                     Curl
-    the service with https.'\n    echo '--http                      Curl the service
-    with http.'\n    echo '--local                     Run local tests'\n    echo
-    '--nirmata                   Run Nirmata app tests'\n    echo '-q                          Do
+    -e \"\\e[31mError: ${@}\\e[0m\"\n    if [ \"$CONTINUE\" = \"no\" ];then\n        #
+    THIS EXITS THE SCRIPT\n        echo -e \"\\e[31mContinue is not set exiting on
+    error!\\e[0m\"\n       namespaces=\"$(kubectl get ns  --no-headers | awk '{print
+    $1}')\"\n       for ns in $namespaces;do\n          kubectl --namespace=$ns delete
+    ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n        done\n        kubectl
+    --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true
+    &>/dev/null\n        # THIS EXITS THE SCRIPT\n        exit 1\n    fi\n}\n#function
+    to print yellow text\nwarn(){\n    warn=1\n    # shellcheck disable=SC2145\n    echo
+    -e \"\\e[33mWarn: ${@}\\e[0m\"\n}\n#function to print green text\ngood(){\n    if
+    [ ! \"$QUIET\" = \"yes\" ];then\n        # shellcheck disable=SC2145\n        echo
+    -e \"\\e[32mGOOD: ${@}\\e[0m\"\n    fi\n}\n\necho_cmd(){\n        # shellcheck
+    disable=SC2145\n        echo \"${@}\"\n        # shellcheck disable=SC2068\n        ${@}\n}\n\nhelpfunction(){\n
+    \   echo \"Note that this script requires access to the following containers:\"\n
+    \   echo \"nicolaka/netshoot for cluster tests.\"\n    echo \"ssilbory/sendemail
+    for sending email.\"\n    echo \"Usage: $0\"\n    echo \"--version                   Reports
+    version ($version)\"\n    echo \"--allns                     Test all namespaces
+    (Default is only \\\"$namespace\\\")\"\n    echo '--dns-target dns.name       (Default
+    nirmata.com)'\n    #echo '--exit                     Exit on errors'\n    echo
+    '--https                     Curl the service with https.'\n    echo '--http                      Curl
+    the service with http.'\n    echo '--local                     Run local tests'\n
+    \   echo '--nirmata                   Run Nirmata app tests'\n    echo '-q                          Do
     not report success'\n    echo \"--warnok                    Do not exit 2 on warnings.\"\n
     \   echo \"--namespace namespace_name  (Default is \\\"$namespace\\\").\"\n    echo
     '--cluster                   Run Nirmata K8 cluster tests'\n    echo \"--service
