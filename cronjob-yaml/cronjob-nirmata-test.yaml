@@ -4,7 +4,7 @@ kind: "CronJob"
 spec:
   concurrencyPolicy: "Allow"
   suspend: false
-  successfulJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 3
   schedule: "@hourly"
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -33,7 +33,7 @@ spec:
           volumes:
           - name: "nirmata-test-script"
             configMap:
-              defaultMode: 493
+              defaultMode: 0555
               name: "nirmata-test-script"
           containers:
           - name: "nirmata-test"
