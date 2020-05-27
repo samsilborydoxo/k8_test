@@ -3,7 +3,7 @@
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
 
-version=1.0.4
+version=1.0.5
 #default external dns target
 DNSTARGET=nirmata.com
 #default service target
@@ -63,6 +63,8 @@ add_kubectl=""
 df_free=80
 # mongo seems to run out of space more easily during syncs
 df_free_mongo=50
+# docker parition free space
+df_free_root=85
 
 if [ -f /.dockerenv ]; then
     export INDOCKER=0
@@ -380,7 +382,7 @@ for mongo in $mongos; do
             kubectl -n $mongo_ns get pod $mongo --no-headers -o wide
         fi
     fi
-    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /data/db | awk '{ print $5; }' |tail -1|sed s/%//)
     [[ $mongo_df -gt $df_free_mongo ]] && (error "Found MongoDB volume at ${mongo_df}% usage on $mongo" ; \
         kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G' )
     kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
@@ -455,7 +457,7 @@ for zoo in $zoos; do
 
     fi
     zoo_num=$((zoo_num + 1));
-    zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    zoo_df=$(kubectl -n $zoo_ns exec $zoo -- df /var/lib/zookeeper | awk '{ print $5; }' |tail -1|sed s/%//)
     [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo!!"
 done
 
@@ -516,7 +518,7 @@ kafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka --no-head
 kaf_num=0
 for kafka in $kafkas; do
     echo "Found Kafka Pod $kafka"
-    kafka_df=$(kubectl -n $kafka_ns exec $kafka -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)
+    kafka_df=$(kubectl -n $kafka_ns exec $kafka -- df /var/lib/kafka | awk '{ print $5; }' |tail -1|sed s/%//)
     [[ $kafka_df -gt $df_free ]] && error "Found Kafka volume at ${kafka_df}% usage on $kafka"
     kaf_num=$((kaf_num + 1));
 done
@@ -702,9 +704,15 @@ spec:
         echo 'Note you should have either coredns or kube-dns running. Not both.'
     fi
 
-     namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
-     for ns in $namespaces;do
-         kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
+    for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
+      root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)
+      [[ $root_df -gt $df_free_root ]] && ( node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName) ;\
+        error "Found docker partition ${root_df}% usage on $node" ; )
+
+    done
+    namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
+    for ns in $namespaces;do
+      kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null
     done
 
 
@@ -725,6 +733,7 @@ if [[ $(swapon -s | wc -l) -gt 1 ]] ;  then
         error "Found swap enabled!"
         echo Consider if you are having issues:
         echo "sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab"
+	echo "swapoff -a"
     fi
   else
     good No swap found
@@ -732,8 +741,9 @@ fi
 
 # It's possible to run docker with selinux, but we don't support that.
 if type sestatus &>/dev/null;then
-    if ! sestatus | grep "Current mode" |grep -e permissive -e disabled;then
+    if sestatus | grep "Current mode:" |grep -e enforcing ;then
         warn 'SELinux enabled'
+	sestatus
         if [[ $fix_issues -eq 0 ]];then
             echo "Applying the following fixes"
             echo_cmd sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config
@@ -834,12 +844,11 @@ if docker info 2>/dev/null|grep mountpoint;then
 fi
 
 # Is the version of docker locked/held if not we are going to suffer death by upgrade.
-if [ -e /usr/bin/docker ];then
-   dockerpkg=$(dpkg -S /usr/bin/docker |awk '{print $1}' |sed 's/:$//')
-else
+if [ ! -e /usr/bin/docker ];then
   error no /usr/bin/docker
 fi
 if [ -e /usr/bin/dpkg ];then
+  dockerpkg=$(dpkg -S /usr/bin/docker |awk '{print $1}' |sed 's/:$//')
   if [[ $dockerpkg =~ docker.io ]];then
     if  sudo apt-mark showhold |grep -q docker.io; then
       good docker.io package held

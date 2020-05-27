@@ -2,7 +2,7 @@ apiVersion: v1
 data:
   nirmata_test.sh: "#!/bin/bash\n# shellcheck disable=SC1117,SC2086,SC2001\n\n# This
     might be better done in python or ruby, but we can't really depend on those existing
-    or having useful modules on customer sites or containers.\n\nversion=1.0.4\n#default
+    or having useful modules on customer sites or containers.\n\nversion=1.0.5\n#default
     external dns target\nDNSTARGET=nirmata.com\n#default service target\nSERVICETARGET=kubernetes.default.svc.cluster.local\n#
     set to zero to default to all namespaces\nallns=1\n# set to zero to default to
     curl url\ncurl=1\n# Default namespace for nirmata services\nnamespace=\"nirmata\"\n#
@@ -22,30 +22,31 @@ data:
     default sendemail containers Note NOT sendmail!\nsendemail='ssilbory/sendemail'\nalwaysemail=1\n#
     Set this to fix local issues by default\nfix_issues=1\n# warnings return 2 otherwise\nwarnok=1\n#additional
     args for kubectl\nadd_kubectl=\"\"\n# required free space for nirmata pods\ndf_free=80\n#
-    mongo seems to run out of space more easily during syncs\ndf_free_mongo=50\n\nif
-    [ -f /.dockerenv ]; then\n    export INDOCKER=0\nelse\n    export INDOCKER=1\nfi\n\n#function
-    to print red text\nerror(){\n    error=1\n    # shellcheck disable=SC2145\n    echo
-    -e \"\\e[31mError: ${@}\\e[0m\"\n    if [ \"$CONTINUE\" = \"no\" ];then\n        #
-    THIS EXITS THE SCRIPT\n        echo -e \"\\e[31mContinue is not set exiting on
-    error!\\e[0m\"\n       namespaces=\"$(kubectl get ns  --no-headers | awk '{print
-    $1}')\"\n       for ns in $namespaces;do\n          kubectl --namespace=$ns delete
-    ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n        done\n        kubectl
-    --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true
-    &>/dev/null\n        # THIS EXITS THE SCRIPT\n        exit 1\n    fi\n}\n#function
-    to print yellow text\nwarn(){\n    warn=1\n    # shellcheck disable=SC2145\n    echo
-    -e \"\\e[33mWarn: ${@}\\e[0m\"\n}\n#function to print green text\ngood(){\n    if
-    [ ! \"$QUIET\" = \"yes\" ];then\n        # shellcheck disable=SC2145\n        echo
-    -e \"\\e[32mGOOD: ${@}\\e[0m\"\n    fi\n}\n\necho_cmd(){\n        # shellcheck
-    disable=SC2145\n        echo \"${@}\"\n        # shellcheck disable=SC2068\n        ${@}\n}\n\nhelpfunction(){\n
-    \   echo \"Note that this script requires access to the following containers:\"\n
-    \   echo \"nicolaka/netshoot for cluster tests.\"\n    echo \"ssilbory/sendemail
-    for sending email.\"\n    echo \"Usage: $0\"\n    echo \"--version                   Reports
-    version ($version)\"\n    echo \"--allns                     Test all namespaces
-    (Default is only \\\"$namespace\\\")\"\n    echo '--dns-target dns.name       (Default
-    nirmata.com)'\n    #echo '--exit                     Exit on errors'\n    echo
-    '--https                     Curl the service with https.'\n    echo '--http                      Curl
-    the service with http.'\n    echo '--local                     Run local tests'\n
-    \   echo '--nirmata                   Run Nirmata app tests'\n    echo '-q                          Do
+    mongo seems to run out of space more easily during syncs\ndf_free_mongo=50\n#
+    docker parition free space\ndf_free_root=85\n\nif [ -f /.dockerenv ]; then\n    export
+    INDOCKER=0\nelse\n    export INDOCKER=1\nfi\n\n#function to print red text\nerror(){\n
+    \   error=1\n    # shellcheck disable=SC2145\n    echo -e \"\\e[31mError: ${@}\\e[0m\"\n
+    \   if [ \"$CONTINUE\" = \"no\" ];then\n        # THIS EXITS THE SCRIPT\n        echo
+    -e \"\\e[31mContinue is not set exiting on error!\\e[0m\"\n       namespaces=\"$(kubectl
+    get ns  --no-headers | awk '{print $1}')\"\n       for ns in $namespaces;do\n
+    \         kubectl --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true
+    &>/dev/null\n        done\n        kubectl --namespace=$namespace delete ds nirmata-net-test-all
+    --ignore-not-found=true &>/dev/null\n        # THIS EXITS THE SCRIPT\n        exit
+    1\n    fi\n}\n#function to print yellow text\nwarn(){\n    warn=1\n    # shellcheck
+    disable=SC2145\n    echo -e \"\\e[33mWarn: ${@}\\e[0m\"\n}\n#function to print
+    green text\ngood(){\n    if [ ! \"$QUIET\" = \"yes\" ];then\n        # shellcheck
+    disable=SC2145\n        echo -e \"\\e[32mGOOD: ${@}\\e[0m\"\n    fi\n}\n\necho_cmd(){\n
+    \       # shellcheck disable=SC2145\n        echo \"${@}\"\n        # shellcheck
+    disable=SC2068\n        ${@}\n}\n\nhelpfunction(){\n    echo \"Note that this
+    script requires access to the following containers:\"\n    echo \"nicolaka/netshoot
+    for cluster tests.\"\n    echo \"ssilbory/sendemail for sending email.\"\n    echo
+    \"Usage: $0\"\n    echo \"--version                   Reports version ($version)\"\n
+    \   echo \"--allns                     Test all namespaces (Default is only \\\"$namespace\\\")\"\n
+    \   echo '--dns-target dns.name       (Default nirmata.com)'\n    #echo '--exit
+    \                    Exit on errors'\n    echo '--https                     Curl
+    the service with https.'\n    echo '--http                      Curl the service
+    with http.'\n    echo '--local                     Run local tests'\n    echo
+    '--nirmata                   Run Nirmata app tests'\n    echo '-q                          Do
     not report success'\n    echo \"--warnok                    Do not exit 2 on warnings.\"\n
     \   echo \"--namespace namespace_name  (Default is \\\"$namespace\\\").\"\n    echo
     '--cluster                   Run Nirmata K8 cluster tests'\n    echo \"--service
@@ -143,7 +144,7 @@ data:
     \           warn \"$mongo is not master or slave! (Are we standalone?)\"\n            mongo_error=1\n
     \           kubectl -n $mongo_ns get pod $mongo --no-headers -o wide\n        fi\n
     \   fi\n    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df
-    /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $mongo_df -gt $df_free_mongo
+    /data/db | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $mongo_df -gt $df_free_mongo
     ]] && (error \"Found MongoDB volume at ${mongo_df}% usage on $mongo\" ; \\\n        kubectl
     -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G'
     )\n    kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt
@@ -184,16 +185,16 @@ data:
     \"$zoo appears to have failed!! (not follower/leader/standalone)\"\n                kubectl
     -n $zoo_ns get pod $zoo --no-headers -o wide\n                zoo_error=1\n            fi\n
     \       fi\n\n    fi\n    zoo_num=$((zoo_num + 1));\n    zoo_df=$(kubectl -n $zoo_ns
-    exec $zoo -- df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $zoo_df
-    -gt $df_free ]] && error \"Found zookeeper volume at ${zoo_df}% usage on $zoo!!\"\ndone\n\n#
-    Crude parse, but it will do for now.\nzkCli=$(kubectl exec $zoo -n $zoo_ns --
-    sh -c \"ls /opt/zoo*/bin/zkCli.sh|head -1\")\nconnected_kaf=$(kubectl exec $zoo
-    -n $zoo_ns -- sh -c \"echo ls /brokers/ids | $zkCli\")\ncon_kaf_num=0\n# What
-    was I thinking here?\n# shellcheck disable=SC2076\nif [[ $connected_kaf =~ '[0,
-    1, 2]' ]];then\n    con_kaf_num=3\nfi\n# shellcheck disable=SC2076\nif [[ $connected_kaf
-    =~ '[0, 1]' ]];then\n    con_kaf_num=2\nfi\n# shellcheck disable=SC2076\nif [[
-    $connected_kaf =~ '[0]' ]];then\n    con_kaf_num=1\nfi\n\nif [[ $zoo_num -gt 3
-    ]];then\n    error \"Found $zoo_num Zookeeper Pods $zoos!!\"\n    zoo_error=1\nfi\nif
+    exec $zoo -- df /var/lib/zookeeper | awk '{ print $5; }' |tail -1|sed s/%//)\n
+    \   [[ $zoo_df -gt $df_free ]] && error \"Found zookeeper volume at ${zoo_df}%
+    usage on $zoo!!\"\ndone\n\n# Crude parse, but it will do for now.\nzkCli=$(kubectl
+    exec $zoo -n $zoo_ns -- sh -c \"ls /opt/zoo*/bin/zkCli.sh|head -1\")\nconnected_kaf=$(kubectl
+    exec $zoo -n $zoo_ns -- sh -c \"echo ls /brokers/ids | $zkCli\")\ncon_kaf_num=0\n#
+    What was I thinking here?\n# shellcheck disable=SC2076\nif [[ $connected_kaf =~
+    '[0, 1, 2]' ]];then\n    con_kaf_num=3\nfi\n# shellcheck disable=SC2076\nif [[
+    $connected_kaf =~ '[0, 1]' ]];then\n    con_kaf_num=2\nfi\n# shellcheck disable=SC2076\nif
+    [[ $connected_kaf =~ '[0]' ]];then\n    con_kaf_num=1\nfi\n\nif [[ $zoo_num -gt
+    3 ]];then\n    error \"Found $zoo_num Zookeeper Pods $zoos!!\"\n    zoo_error=1\nfi\nif
     [[ $zoo_num -eq 0 ]];then\n    error \"Found Zero Zookeeper Pods !!\"\n    zoo_error=1\nelse\n
     \   [[ $zoo_num -eq 1 ]] && warn \"Found One Zookeeper Pod.\" && zoo_error=1\nfi\nif
     [ -z $zoo_leader ];then\n    error \"No Zookeeper Leader found!!\"\n    zoo_error=1\nfi\nif
@@ -207,40 +208,40 @@ data:
     $1}'|head -1)\nkafkas=$(kubectl get pod -n $kafka_ns -l nirmata.io/service.name=kafka
     --no-headers | awk '{print $1}')\nkaf_num=0\nfor kafka in $kafkas; do\n    echo
     \"Found Kafka Pod $kafka\"\n    kafka_df=$(kubectl -n $kafka_ns exec $kafka --
-    df /tmp/ | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $kafka_df -gt $df_free
-    ]] && error \"Found Kafka volume at ${kafka_df}% usage on $kafka\"\n    kaf_num=$((kaf_num
-    + 1));\ndone\n[[ $kaf_num -gt 3 ]] && error \"Found $kaf_num Kafka Pods $kafkas!!!\"
-    && kaf_error=1\nif [[ $kaf_num -eq 0 ]];then\n    error \"Found Zero Kafka Pods!!!\"\n
-    \   kaf_error=1\nelse\n    [[ $kaf_num -lt 3 ]] && warn \"Found $kaf_num Kafka
-    Pod!\"\n    kaf_error=1\nfi\n[[ $kaf_error -eq 0 ]] && good \"Kafka passed tests\"\n}\n\n#function
-    to email results\ndo_email(){\nif [[ $email -eq 0 ]];then\n    # Check for certs
-    in the cronjob's container\n    if [ -e /certs/ ];then\n        cp -f /certs/*.crt
-    /usr/local/share/ca-certificates/\n        update-ca-certificates\n    fi\n    [
-    -z $logfile ] && logfile=\"/tmp/k8_test.$$\"\n    [ -z $EMAIL_USER ] && EMAIL_USER=\"\"
-    #would this ever work?\n    [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=\"\" #would this
-    ever work?\n    #[ -z $TO ] && error \"No TO address given!!!\" && exit 1 # Why
-    did I comment this out?\n    [ -z $FROM ] && FROM=\"k8@nirmata.com\" && warn \"You
-    provided no From address using $FROM\"\n    [ -z \"$SUBJECT\" ] && SUBJECT=\"K8
-    test script error\" && warn \"You provided no Subject using $SUBJECT\"\n    [
-    -z $SMTP_SERVER ] && error \"No smtp server given!!!\" && exit 1\n    # This needs
-    to be redone\n    if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt
-    0 ]]; then\n        if [[ $warnok -eq 0 ]];then\n            if [[ ${alwaysemail}
-    -ne 0 ]];then\n                if [[ ${error} -eq 0 ]];then\n                    return
-    0\n                fi\n            fi\n        fi\n\n        #Let's wait for the
-    file to sync in case tee is buffered\n        echo; echo; echo\n        sleep
-    2\n        # Reformat the log file for better reading and shell check can bite
-    me.\n        # shellcheck disable=SC1012,SC2028,SC2116\n        BODY=$(sed -e
-    's/\\x1b\\[[0-9;]*m//g' -e 's/$'\"/$(echo \\\\\\r)/\" ${logfile})\n        for
-    email_to in $TO; do\n            if type -P \"sendEmail\" &>/dev/null; then\n
-    \               if [ -n \"$PASSWORD\" ];then\n                    echo $BODY |sendEmail
-    -t \"$email_to\" -f \"$FROM\" -u \\\"\"$SUBJECT\"\\\" -s \"$SMTP_SERVER\" \"$EMAIL_OPTS\"\n
-    \               else\n                    echo $BODY |sendEmail -t \"$email_to\"
-    -f \"$FROM\" -u \\\"\"$SUBJECT\"\\\" -s \"$SMTP_SERVER\" -xu \"$EMAIL_USER\" -xp
-    \"$EMAIL_PASSWD\" \"$EMAIL_OPTS\"\n                fi\n            else\n                docker
-    run $sendemail $email_to $FROM \"$SUBJECT\" \"${BODY}\" $SMTP_SERVER \"$EMAIL_USER\"
-    \"$EMAIL_PASSWD\" \"$EMAIL_OPTS\"\n            fi\n            #If they named
-    it something else don't delete\n            rm -f /tmp/k8_test.$$\n        done\n
-    \   fi\nfi\n}\n\n# This tests the sanity of your k8 cluster\ncluster_test(){\n
+    df /var/lib/kafka | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $kafka_df
+    -gt $df_free ]] && error \"Found Kafka volume at ${kafka_df}% usage on $kafka\"\n
+    \   kaf_num=$((kaf_num + 1));\ndone\n[[ $kaf_num -gt 3 ]] && error \"Found $kaf_num
+    Kafka Pods $kafkas!!!\" && kaf_error=1\nif [[ $kaf_num -eq 0 ]];then\n    error
+    \"Found Zero Kafka Pods!!!\"\n    kaf_error=1\nelse\n    [[ $kaf_num -lt 3 ]]
+    && warn \"Found $kaf_num Kafka Pod!\"\n    kaf_error=1\nfi\n[[ $kaf_error -eq
+    0 ]] && good \"Kafka passed tests\"\n}\n\n#function to email results\ndo_email(){\nif
+    [[ $email -eq 0 ]];then\n    # Check for certs in the cronjob's container\n    if
+    [ -e /certs/ ];then\n        cp -f /certs/*.crt /usr/local/share/ca-certificates/\n
+    \       update-ca-certificates\n    fi\n    [ -z $logfile ] && logfile=\"/tmp/k8_test.$$\"\n
+    \   [ -z $EMAIL_USER ] && EMAIL_USER=\"\" #would this ever work?\n    [ -z $EMAIL_PASSWD
+    ] && EMAIL_PASSWD=\"\" #would this ever work?\n    #[ -z $TO ] && error \"No TO
+    address given!!!\" && exit 1 # Why did I comment this out?\n    [ -z $FROM ] &&
+    FROM=\"k8@nirmata.com\" && warn \"You provided no From address using $FROM\"\n
+    \   [ -z \"$SUBJECT\" ] && SUBJECT=\"K8 test script error\" && warn \"You provided
+    no Subject using $SUBJECT\"\n    [ -z $SMTP_SERVER ] && error \"No smtp server
+    given!!!\" && exit 1\n    # This needs to be redone\n    if [[ ${alwaysemail}
+    -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then\n        if [[ $warnok -eq 0
+    ]];then\n            if [[ ${alwaysemail} -ne 0 ]];then\n                if [[
+    ${error} -eq 0 ]];then\n                    return 0\n                fi\n            fi\n
+    \       fi\n\n        #Let's wait for the file to sync in case tee is buffered\n
+    \       echo; echo; echo\n        sleep 2\n        # Reformat the log file for
+    better reading and shell check can bite me.\n        # shellcheck disable=SC1012,SC2028,SC2116\n
+    \       BODY=$(sed -e 's/\\x1b\\[[0-9;]*m//g' -e 's/$'\"/$(echo \\\\\\r)/\" ${logfile})\n
+    \       for email_to in $TO; do\n            if type -P \"sendEmail\" &>/dev/null;
+    then\n                if [ -n \"$PASSWORD\" ];then\n                    echo $BODY
+    |sendEmail -t \"$email_to\" -f \"$FROM\" -u \\\"\"$SUBJECT\"\\\" -s \"$SMTP_SERVER\"
+    \"$EMAIL_OPTS\"\n                else\n                    echo $BODY |sendEmail
+    -t \"$email_to\" -f \"$FROM\" -u \\\"\"$SUBJECT\"\\\" -s \"$SMTP_SERVER\" -xu
+    \"$EMAIL_USER\" -xp \"$EMAIL_PASSWD\" \"$EMAIL_OPTS\"\n                fi\n            else\n
+    \               docker run $sendemail $email_to $FROM \"$SUBJECT\" \"${BODY}\"
+    $SMTP_SERVER \"$EMAIL_USER\" \"$EMAIL_PASSWD\" \"$EMAIL_OPTS\"\n            fi\n
+    \           #If they named it something else don't delete\n            rm -f /tmp/k8_test.$$\n
+    \       done\n    fi\nfi\n}\n\n# This tests the sanity of your k8 cluster\ncluster_test(){\n
     \   command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'\n    echo
     \"Starting Cluster Tests\"\n    # Setup a DaemonSet to test dns on all nodes.\n
     \   echo 'apiVersion: extensions/v1beta1\nkind: DaemonSet\nmetadata:\n  name:
@@ -304,39 +305,45 @@ data:
     \"DNS issues detected\"\n        echo 'Additional debugging info:'\n        kubectl
     get svc -n kube-system kube-dns coredns\n        kubectl get deployments -n kube-system
     coredns kube-dns\n        echo 'Note you should have either coredns or kube-dns
-    running. Not both.'\n    fi\n\n     namespaces=\"$(kubectl get ns  --no-headers
-    | awk '{print $1}')\"\n     for ns in $namespaces;do\n         kubectl --namespace=$ns
-    delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n    done\n\n\n\n}\n\n#
-    test if your local system can run k8\nlocal_test(){\necho \"Starting Local Tests\"\n\n#
-    Kubelet generally won't run if swap is enabled.\nif [[ $(swapon -s | wc -l) -gt
-    1 ]] ;  then\n    if [[ $fix_issues -eq 0 ]];then\n        warn \"Found swap enabled\"\n
-    \       echo_cmd swapoff -a\n        echo_cmd sed -i '/[[:space:]]*swap[[:space:]]*swap/d'
-    /etc/fstab\n    else\n        error \"Found swap enabled!\"\n        echo Consider
-    if you are having issues:\n        echo \"sed -i '/[[:space:]]*swap[[:space:]]*swap/d'
-    /etc/fstab\"\n    fi\n  else\n    good No swap found\nfi\n\n# It's possible to
-    run docker with selinux, but we don't support that.\nif type sestatus &>/dev/null;then\n
-    \   if ! sestatus | grep \"Current mode\" |grep -e permissive -e disabled;then\n
-    \       warn 'SELinux enabled'\n        if [[ $fix_issues -eq 0 ]];then\n            echo
-    \"Applying the following fixes\"\n            echo_cmd sed -i s/^SELINUX=.*/SELINUX=permissive/
-    /etc/selinux/config\n            echo_cmd setenforce 0\n        else\n            echo
-    Consider the following changes to disabled SELinux if you are having issues:\n
-    \           echo '  sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config'\n
-    \           echo '  setenforce 0'\n        fi\n    else\n      good Selinux not
-    enforcing\n    fi\nelse\n    #Assuming debian/ubuntu don't do selinux if no sestatus
-    binary\n    if [ -e /etc/os-release ]  &&  ! grep -q -i -e debian -e ubuntu /etc/os-release;then\n
-    \       warn 'sestatus binary not found assuming SELinux is disabled.'\n    else\n
-    \     good \"No Selinux found\"\n    fi\nfi\n\n#test kernel ip forward settings\nif
-    grep -q 0 /proc/sys/net/ipv4/ip_forward;then\n        if [[ $fix_issues -eq 0
-    ]];then\n            warn net.ipv4.ip_forward is set to 0\n            echo \"Applying
-    the following fixes\"\n            echo_cmd sysctl -w net.ipv4.ip_forward=1\n
-    \           echo_cmd echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf\n        else\n
-    \           error net.ipv4.ip_forward is set to 0\n            echo Consider the
-    following changes:\n            echo '  sysctl -w net.ipv4.ip_forward=1'\n            echo
-    '  echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf'\n        fi\nelse\n    good
-    ip_forward enabled\nfi\n\n#check for br netfilter\nif [ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables
-    ];then\n    if [[ $fix_issues -eq 0 ]];then\n        warn '/proc/sys/net/bridge/bridge-nf-call-iptables
-    does not exist!'\n        echo \"Applying the following fixes\"\n        echo_cmd
-    modprobe br_netfilter\n        echo_cmd echo \"br_netfilter\" > /etc/modules-load.d/br_netfilter.conf\n
+    running. Not both.'\n    fi\n\n    for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app
+    --no-headers |grep Running |awk '{print $1}');do\n      root_df=$(kubectl -n $ns
+    exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)\n      [[ $root_df
+    -gt $df_free_root ]] && ( node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName)
+    ;\\\n        error \"Found docker partition ${root_df}% usage on $node\" ; )\n\n
+    \   done\n    namespaces=\"$(kubectl get ns  --no-headers | awk '{print $1}')\"\n
+    \   for ns in $namespaces;do\n      kubectl --namespace=$ns delete ds nirmata-net-test-all
+    --ignore-not-found=true &>/dev/null\n    done\n\n\n\n}\n\n# test if your local
+    system can run k8\nlocal_test(){\necho \"Starting Local Tests\"\n\n# Kubelet generally
+    won't run if swap is enabled.\nif [[ $(swapon -s | wc -l) -gt 1 ]] ;  then\n    if
+    [[ $fix_issues -eq 0 ]];then\n        warn \"Found swap enabled\"\n        echo_cmd
+    swapoff -a\n        echo_cmd sed -i '/[[:space:]]*swap[[:space:]]*swap/d' /etc/fstab\n
+    \   else\n        error \"Found swap enabled!\"\n        echo Consider if you
+    are having issues:\n        echo \"sed -i '/[[:space:]]*swap[[:space:]]*swap/d'
+    /etc/fstab\"\n\techo \"swapoff -a\"\n    fi\n  else\n    good No swap found\nfi\n\n#
+    It's possible to run docker with selinux, but we don't support that.\nif type
+    sestatus &>/dev/null;then\n    if sestatus | grep \"Current mode:\" |grep -e enforcing
+    ;then\n        warn 'SELinux enabled'\n\tsestatus\n        if [[ $fix_issues -eq
+    0 ]];then\n            echo \"Applying the following fixes\"\n            echo_cmd
+    sed -i s/^SELINUX=.*/SELINUX=permissive/ /etc/selinux/config\n            echo_cmd
+    setenforce 0\n        else\n            echo Consider the following changes to
+    disabled SELinux if you are having issues:\n            echo '  sed -i s/^SELINUX=.*/SELINUX=permissive/
+    /etc/selinux/config'\n            echo '  setenforce 0'\n        fi\n    else\n
+    \     good Selinux not enforcing\n    fi\nelse\n    #Assuming debian/ubuntu don't
+    do selinux if no sestatus binary\n    if [ -e /etc/os-release ]  &&  ! grep -q
+    -i -e debian -e ubuntu /etc/os-release;then\n        warn 'sestatus binary not
+    found assuming SELinux is disabled.'\n    else\n      good \"No Selinux found\"\n
+    \   fi\nfi\n\n#test kernel ip forward settings\nif grep -q 0 /proc/sys/net/ipv4/ip_forward;then\n
+    \       if [[ $fix_issues -eq 0 ]];then\n            warn net.ipv4.ip_forward
+    is set to 0\n            echo \"Applying the following fixes\"\n            echo_cmd
+    sysctl -w net.ipv4.ip_forward=1\n            echo_cmd echo net.ipv4.ip_forward=1
+    >> /etc/sysctl.conf\n        else\n            error net.ipv4.ip_forward is set
+    to 0\n            echo Consider the following changes:\n            echo '  sysctl
+    -w net.ipv4.ip_forward=1'\n            echo '  echo net.ipv4.ip_forward=1 >> /etc/sysctl.conf'\n
+    \       fi\nelse\n    good ip_forward enabled\nfi\n\n#check for br netfilter\nif
+    [ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ];then\n    if [[ $fix_issues
+    -eq 0 ]];then\n        warn '/proc/sys/net/bridge/bridge-nf-call-iptables does
+    not exist!'\n        echo \"Applying the following fixes\"\n        echo_cmd modprobe
+    br_netfilter\n        echo_cmd echo \"br_netfilter\" > /etc/modules-load.d/br_netfilter.conf\n
     \   else\n        error '/proc/sys/net/bridge/bridge-nf-call-iptables does not
     exist!'\n        echo 'Is the br_netfilter module loaded? \"lsmod |grep br_netfilter\"'\n
     \       echo Consider the following changes:\n        echo '  modprobe br_netfilter'\n
@@ -360,9 +367,9 @@ data:
     \ else\n    good Docker is starting at boot\nfi\n\nif docker info 2>/dev/null|grep
     mountpoint;then\n  warn 'Docker does not have its own mountpoint'\n  # What is
     the fix for this??? How does this happen I've never seen it.\nfi\n\n# Is the version
-    of docker locked/held if not we are going to suffer death by upgrade.\nif [ -e
-    /usr/bin/docker ];then\n   dockerpkg=$(dpkg -S /usr/bin/docker |awk '{print $1}'
-    |sed 's/:$//')\nelse\n  error no /usr/bin/docker\nfi\nif [ -e /usr/bin/dpkg ];then\n
+    of docker locked/held if not we are going to suffer death by upgrade.\nif [ !
+    -e /usr/bin/docker ];then\n  error no /usr/bin/docker\nfi\nif [ -e /usr/bin/dpkg
+    ];then\n  dockerpkg=$(dpkg -S /usr/bin/docker |awk '{print $1}' |sed 's/:$//')\n
     \ if [[ $dockerpkg =~ docker.io ]];then\n    if  sudo apt-mark showhold |grep
     -q docker.io; then\n      good docker.io package held\n    else\n       warn docker.io
     package is not held\n       if [[ $fix_issues -eq 0 ]];then\n         echo_cmd
