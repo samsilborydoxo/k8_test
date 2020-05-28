@@ -1,27 +1,13 @@
-You can run this script as a kubernetes job or cronjob.
+You can run this script as a kubernetes job or cronjob.  See cronjob-yaml for an example K8 cronjob implementation.  You should be able to install it with "kubectl -n nirmata apply -f cronjob-yaml".
 
-You will need to install the script as a config map.
-`kubectl create configmap  nirmata-test-script --from-file=nirmata_test.sh`
+Note that you will need to change the namespace in the above command and the yaml files in cronjob-yaml if your namespace is not nirmata.
 
-Then you will need to install your kubectl config file* or configure a cluster role.
-`kubectl create secret generic nirmata-config-file --from-file=$HOME/.kube/config`
+Also you need to edit the cronjob-yaml/cronjob-nirmata-test.yaml file to:
+- use the right smtp server
+- use your email address
+- use your username
+- use your password
 
-Note that if the config file is not named config you will need to edit the value of KUBECONFIG in the yaml.
+I recommend setting schedule: to "0 0 0 0 0" for testing.  Just be sure not to leave it running like that for long.
 
-Creating a cronjob.
-`kubectl apply -f nirmata_test_cron.yaml`
-
-You will also need access to the ssilbory/nirmata-test image defined in the yaml file.  Either import it to your repo or build it.
-`docker build . -t ssilbory/nirmata-test:1`
-
-
-*Ideally this kubeconfig file should be a limited role granting access only to the nirmata namespace.
-https://kubernetes.io/docs/reference/access-authn-authz/authorization/
-
-
-See cronjob-yaml for an example K8 cronjob implimentation.  You should be able to install it with "kubectl -n nirmata apply -f cronjob-yaml".  
-
-Note that you will need to change the namespace in the above command and the yaml files in cronjob-yaml.  Also you need to edit the cronjob-yaml/cronjob-nirmata-test.yaml file
-- to use the right smtp server
-- to use your email addresseses
-- remove --always-email once you are sure things work
+Finally you''l want to remove --always-email once you are sure things work.
