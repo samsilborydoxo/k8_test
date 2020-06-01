@@ -3,6 +3,13 @@
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
 
+# This script has 3 functional modes.  You can in theory run all 3 modes, but really you should run them independently even when that makes sense.
+# Test local system for K8 compatiblity, and basic custom cluster sanity tests. --local
+# Test K8 for basic sanity --cluster
+# Test Nirmata installation mainly mongodb. --nirmata
+#    Note this script considers any nirmata installation that isn't HA to be in warning.
+
+
 version=1.0.5
 #default external dns target
 DNSTARGET=nirmata.com
@@ -339,20 +346,20 @@ for i in "$@";do
             exit 0
         ;;
         # Remember that shifting doesn't remove later args from the loop
+        # We will exir on any arg with a - even if we shift it away.
         -*)
             helpfunction
             exit 1
         ;;
     esac
 done
-# We don't ever want to pass --ssh to ssh!!!
+# We don't ever want to pass --ssh to ssh or we get ssh inception, but without DiCaprio.  (Although likely it will just break.)
 script_args=$(echo $script_args |sed 's/--ssh//')
 # shellcheck disable=SC2139
 alias kubectl="kubectl $add_kubectl "
 
 # Test mongodb pods
 mongo_test(){
-# mongo testing
 echo "Testing MongoDB Pods"
 mongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}'|head -1)
 mongos=$(kubectl get pod --namespace=$mongo_ns -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')
@@ -363,6 +370,7 @@ mongo_master=""
 mongo_masters=0
 mongo_error=0
 for mongo in $mongos; do
+    # Depending on the version of mongo we might have a sidecar.  We want to give kubectl the right container.
     if kubectl -n $mongo_ns get pod $mongo --no-headers |awk '{ print $2 }' |grep -q '[0-2]/2'; then
         mongo_container="-c mongodb"
     else
@@ -388,15 +396,17 @@ for mongo in $mongos; do
     kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
         warn "WiredTiger lookaside file is very large on $mongo. Consider increasing Mongodb memory."
     mongo_num=$((mongo_num + 1));
-    mongo_stateStr=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo' 2>&1 |grep stateStr)
+    mongo_stateStr_full=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo' 2>&1)
+    mongo_stateStr=$(echo $mongo_stateStr_full |grep stateStr)
     if [[ $mongo_stateStr =~ RECOVERING || $mongo_stateStr =~ DOWN || $mongo_stateStr =~ STARTUP ]];then
+        echo $mongo_stateStr_full
         if [[ $mongo_stateStr =~ RECOVERING ]];then warn "Detected recovering Mongodb from this node!"; fi
         if [[ $mongo_stateStr =~ DOWN ]];then error "Detected Mongodb in down state from this node!"; fi
         if [[ $mongo_stateStr =~ STARTUP ]];then warn "Detected Mongodb in startup state from this node!"; fi
-        kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo "rs.status()" |mongo'
     fi
 done
 if [[ $mongo_num -gt 3 ]];then
+    # Are we ever goign to run more than 3 pods?
     error "Found $mongo_num Mongo Pods $mongos!!"
     mongo_error=1
 fi
@@ -431,6 +441,7 @@ zoos=$(kubectl get pod -n $zoo_ns -l 'nirmata.io/service.name in (zookeeper, zk)
 zoo_num=0
 zoo_leader=""
 for zoo in $zoos; do
+    # High node counts indicate a resource issue or a cleanup failure.
     curr_zoo=$(kubectl -n $zoo_ns exec $zoo -- sh -c "/opt/zookeeper-*/bin/zkServer.sh status" 2>&1|grep Mode)
     zoo_node_count=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo srvr | nc localhost 2181|grep Node.count:" |awk '{ print $3; }')
     if [ $zoo_node_count -lt 50000 ];then
@@ -461,11 +472,12 @@ for zoo in $zoos; do
     [[ $zoo_df -gt $df_free ]] && error "Found zookeeper volume at ${zoo_df}% usage on $zoo!!"
 done
 
+# Many kafkas are connected?
 # Crude parse, but it will do for now.
 zkCli=$(kubectl exec $zoo -n $zoo_ns -- sh -c "ls /opt/zoo*/bin/zkCli.sh|head -1")
 connected_kaf=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo ls /brokers/ids | $zkCli")
 con_kaf_num=0
-# What was I thinking here?
+# What was I thinking here? Sure there is a more readable shell aproved means to do this.
 # shellcheck disable=SC2076
 if [[ $connected_kaf =~ '[0, 1, 2]' ]];then
     con_kaf_num=3
@@ -531,12 +543,14 @@ else
     kaf_error=1
 fi
 [[ $kaf_error -eq 0 ]] && good "Kafka passed tests"
+# Is there more to test is it enough that the zookeeper test verifies the number of connection?
 }
 
 #function to email results
 do_email(){
 if [[ $email -eq 0 ]];then
-    # Check for certs in the cronjob's container
+    # Check for certs in the cronjob's container as sendEmail won't use a server that doesn't auth.
+    # This won't work for any that isn't debianish.
     if [ -e /certs/ ];then
         cp -f /certs/*.crt /usr/local/share/ca-certificates/
         update-ca-certificates
@@ -548,7 +562,7 @@ if [[ $email -eq 0 ]];then
     [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
     [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
     [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
-    # This needs to be redone
+    # This needs to be redone with less nesting and more sanity.
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
         if [[ $warnok -eq 0 ]];then
             if [[ ${alwaysemail} -ne 0 ]];then
@@ -632,7 +646,6 @@ spec:
     required_pods=$(kubectl get node --no-headers | awk '{print $2}' |grep -c Ready )
     num_ns=$(echo $namespaces |wc -w)
     required_pods=$((required_pods * num_ns))
-    #echo required_pods is $required_pods
     echo -n 'Waiting for nirmata-net-test-all pods to start'
     until [[ $(kubectl get pods -l app=nirmata-net-test-all-app --no-headers --all-namespaces|awk '{print $4}' |grep -c Running) -ge $required_pods ]]|| \
       [[ $times = 60 ]];do
@@ -708,7 +721,6 @@ spec:
       root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)
       [[ $root_df -gt $df_free_root ]] && ( node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName) ;\
         error "Found docker partition ${root_df}% usage on $node" ; )
-
     done
     namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
     for ns in $namespaces;do
@@ -823,16 +835,16 @@ fi
 if ! systemctl is-active docker &>/dev/null ; then
     warn 'Docker service is not active? Maybe you are using some other CRI??'
     if [[ $fix_issues -eq 0 ]];then
-     echo_cmd sudo systemctl start docker
+      echo_cmd sudo systemctl start docker
     fi
   else
     good Docker is running
 fi
 
 if ! systemctl is-enabled docker &>/dev/null;then
-    warn 'Docker service is starting at boot. Maybe you are using some other CRI??'
+    warn 'Docker service is not starting at boot. Maybe you are using some other CRI??'
     if [[ $fix_issues -eq 0 ]];then
-     echo_cmd sudo systemctl enable docker
+      echo_cmd sudo systemctl enable docker
     fi
   else
     good Docker is starting at boot
