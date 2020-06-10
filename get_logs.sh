@@ -45,4 +45,4 @@ done
 cd "$startdir" || exit
 tar czf k8-logs-script-$namespace-$datastamp.tgz -C /tmp k8-logs-script-$namespace-$datastamp
 echo k8-logs-script-$namespace-$datastamp.tgz 
-rm -rf /tmp k8-logs-script-$namespace-$datastamp
+rm -rf /tmp/k8-logs-script-$namespace-$datastamp
