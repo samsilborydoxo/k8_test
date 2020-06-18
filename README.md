@@ -4,7 +4,7 @@ The get_logs script will grab logs from the nirmata namespace.  See -h for Flags
 
 See README.kubejobs for making it a K8 cronjob.
 
-The nirmata has 3 basic modes: (Yes they should be different scripts, but it's nice to have single script to download for customers in "air gapped" sites.)
+The nirmata test script has 3 basic modes: (Yes they should be different scripts, but it's nice to have single script to download for customers in "air gapped" sites.)
 
 Test Nirmata application (default)  
 ./nirmata_test.sh --nirmata
