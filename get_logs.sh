@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 namespace="nirmata"
 pod="."
@@ -48,6 +48,9 @@ cd /tmp/k8-logs-script-"$namespace"-"$datastamp" || exit
 
 for curr_pod in $running_pods; do
    kubectl -n "$namespace" logs "$curr_pod" --all-containers=true --tail "$taillines" &>"${curr_pod}.log"
+   kubectl -n "$namespace" describe pods "$curr_pod"  >>"${curr_pod}".describe
+   # Less awk more formating?
+   kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" |grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events >>"${curr_pod}".describe
 done
 
 cd "$startdir" || exit
