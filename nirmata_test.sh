@@ -391,8 +391,10 @@ for mongo in $mongos; do
         fi
     fi
     mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /data/db | awk '{ print $5; }' |tail -1|sed s/%//)
-    [[ $mongo_df -gt $df_free_mongo ]] && (error "Found MongoDB volume at ${mongo_df}% usage on $mongo" ; \
-        kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G' )
+    if [[ $mongo_df -gt $df_free_mongo ]];then 
+        error "Found MongoDB volume at ${mongo_df}% usage on $mongo" 
+        kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G' 
+    fi
     kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
         warn "WiredTiger lookaside file is very large on $mongo. Consider increasing Mongodb memory."
     mongo_num=$((mongo_num + 1));
@@ -719,8 +721,10 @@ spec:
 
     for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
       root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)
-      [[ $root_df -gt $df_free_root ]] && ( node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName) ;\
-        error "Found docker partition ${root_df}% usage on $node" ; )
+      if [[ $root_df -gt $df_free_root ]];then
+          node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName
+          error "Found docker partition ${root_df}% usage on $node" ; )
+      fi
     done
     namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
     for ns in $namespaces;do
