@@ -1,12 +1,20 @@
-#!/bin/bash 
+#!/bin/bash -x
 
 namespace="nirmata"
 pod="."
-taillines=50000
+taillines="--tail 50000"
 datastamp=$(date "+%Y%m%d-%H%M%S")
 startdir=$(pwd)
+zip="gzip"
 
-while getopts 't:p:n:ha' OPTION; do
+helpfunction(){
+    echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] " >&2
+    echo "  -a  All lines" >&2
+    echo "  -x  Use xz compression" >&2
+    echo "  -l  Use this compression level" >&2
+}
+
+while getopts 't:p:n:l:hax' OPTION; do
   case "$OPTION" in
     p)
       pod="$OPTARG"
@@ -20,14 +28,18 @@ while getopts 't:p:n:ha' OPTION; do
     a)
       taillines=""
       ;;
+    x)
+      zip="xz"
+      ;;
+    l)
+      level="$OPTARG"
+      ;;
     h)
-      echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name ]" >&2
-      echo "  -a  All lines" >&2
+      helpfunction
       exit 0
       ;;
     ?)
-      echo "script usage: $(basename "$0") [-n namespace] [-a] [-t number_of_log_lines] [ -p match_string_4_pods ]" >&2
-      echo "  -a  All lines" >&2
+      helpfunction
       exit 1
       ;;
   esac
@@ -53,13 +65,14 @@ cd /tmp/k8-logs-script-"$namespace"-"$datastamp" || exit
 
 
 for curr_pod in $running_pods; do
-   kubectl -n "$namespace" logs "$curr_pod" --all-containers=true "$taillines" &>"${curr_pod}.log"
-   kubectl -n "$namespace" describe pods "$curr_pod"  >>"${curr_pod}".describe
+   kubectl -n "$namespace" logs "$curr_pod" --all-containers=true $taillines | $zip > "${curr_pod}.log.$zip"
+   kubectl -n "$namespace" describe pods "$curr_pod"  2>&1 >>"${curr_pod}".describe
    # Less awk more formating?
-   kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" |grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events >>"${curr_pod}".describe
+   (kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" 2>/dev/null|grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events 2>&1) >>"${curr_pod}".describe
 done
 
 cd "$startdir" || exit
 tar czf "k8-logs-script-$namespace-$datastamp.tgz" -C /tmp "k8-logs-script-$namespace-$datastamp"
 echo "k8-logs-script-$namespace-$datastamp.tgz" 
+
 rm -rf "/tmp/k8-logs-script-$namespace-$datastamp"
