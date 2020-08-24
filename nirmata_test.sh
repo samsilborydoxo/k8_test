@@ -391,9 +391,9 @@ for mongo in $mongos; do
         fi
     fi
     mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df /data/db | awk '{ print $5; }' |tail -1|sed s/%//)
-    if [[ $mongo_df -gt $df_free_mongo ]];then 
-        error "Found MongoDB volume at ${mongo_df}% usage on $mongo" 
-        kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G' 
+    if [[ $mongo_df -gt $df_free_mongo ]];then
+        error "Found MongoDB volume at ${mongo_df}% usage on $mongo"
+        kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G'
     fi
     kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
         warn "WiredTiger lookaside file is very large on $mongo. Consider increasing Mongodb memory."
@@ -601,7 +601,7 @@ fi
 cluster_test(){
     command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'
     echo "Starting Cluster Tests"
-    # Setup a DaemonSet to test dns on all nodes.
+    # Setup a DaemonSet to run tests on all nodes.
     echo 'apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
@@ -670,40 +670,41 @@ spec:
     for ns in $namespaces;do
         echo Testing $ns namespace
     for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
-        echo Testing "$(kubectl -n $ns get pods $pod -o wide --no-headers| awk '{print $7}') Namespace $ns"
+        node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName -n $ns --no-headers)
+        echo "Testing DNS on Node $node in Namespace $ns"
         if  kubectl exec $pod -- nslookup $DNSTARGET 2>&1|grep -e can.t.resolve -e does.not.resolve -e can.t.find -e No.answer;then
-            warn "Can not resolve external DNS name $DNSTARGET on $pod."
+            warn "Can not resolve external DNS name $DNSTARGET in $ns."
             kubectl -n $ns get pod $pod -o wide
             kubectl -n $ns exec $pod -- sh -c "nslookup $DNSTARGET"
             echo
         else
-            good "DNS test $DNSTARGET on $pod suceeded."
+            good "DNS test $DNSTARGET on $node in $ns suceeded."
         fi
         #kubectl -n $ns exec $pod -- nslookup $SERVICETARGET
         if kubectl -n $ns exec $pod -- nslookup $SERVICETARGET 2>&1|grep -e can.t.resolve -e does.not.resolve -e can.t.find -e No.answer;then
-            warn "Can not resolve $SERVICETARGET service on $pod"
+            warn "Can not resolve $SERVICETARGET service on $node in $ns"
             echo 'Debugging info:'
             kubectl get pod $pod -o wide
             dns_error=1
             kubectl -n $ns exec $pod -- nslookup $DNSTARGET
             kubectl -n $ns exec $pod -- nslookup $SERVICETARGET
             kubectl -n $ns exec $pod -- cat /etc/resolv.conf
-            error "DNS test failed to find $SERVICETARGET service on $pod"
+            error "DNS test failed to find $SERVICETARGET service on $node in $ns"
         else
-            good "DNS test $SERVICETARGET on $pod suceeded."
+            good "DNS test $SERVICETARGET on $node in $ns suceeded."
         fi
         if [[ $curl -eq 0 ]];then
              if [[ $http -eq 0 ]];then
                  if  kubectl -n $ns exec $pod -- sh -c "if curl --max-time 5 http://$SERVICETARGET; then exit 0; else exit 1; fi" 2>&1|grep -e 'command terminated with exit code 1';then
                      error "http://$SERVICETARGET failed to respond to curl in 5 seconds!"
                  else
-                     good "HTTP test $SERVICETARGET on $pod suceeded."
+                     good "HTTP test $SERVICETARGET on $node in $ns suceeded."
                  fi
              else
                  if  kubectl -n $ns exec $pod -- sh -c "if curl --max-time 5 -k https://$SERVICETARGET; then exit 0; else exit 1; fi" 2>&1|grep -e 'command terminated with exit code 1';then
                      error "https://$SERVICETARGET failed to respond to curl in 5 seconds!"
                  else
-                     good "HTTPS test $SERVICETARGET on $pod suceeded."
+                     good "HTTPS test $SERVICETARGET on $node in $ns suceeded."
                  fi
              fi
         fi
@@ -718,12 +719,14 @@ spec:
         kubectl get deployments -n kube-system coredns kube-dns
         echo 'Note you should have either coredns or kube-dns running. Not both.'
     fi
-
+    echo Testing space availble on docker partition.
     for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
       root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)
+      node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName -n $ns --no-headers)
       if [[ $root_df -gt $df_free_root ]];then
-          node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName
-          error "Found docker partition ${root_df}% usage on $node" ; )
+        error "Found docker partition at ${root_df}% usage on $node"
+      else
+        good "Found docker partition at ${root_df}% usage on $node"
       fi
     done
     namespaces="$(kubectl get ns  --no-headers | awk '{print $1}')"
