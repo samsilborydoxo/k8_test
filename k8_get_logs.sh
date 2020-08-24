@@ -1,4 +1,4 @@
-#!/bin/bash -x
+#!/bin/bash 
 
 namespace="nirmata"
 pod="."
@@ -6,6 +6,7 @@ taillines="--tail 50000"
 datastamp=$(date "+%Y%m%d-%H%M%S")
 startdir=$(pwd)
 zip="gzip"
+zip_ext="gz"
 
 helpfunction(){
     echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] " >&2
@@ -29,10 +30,15 @@ while getopts 't:p:n:l:hax' OPTION; do
       taillines=""
       ;;
     x)
-      zip="xz"
+      if command -v xz &> /dev/null;then 
+          zip="xz"
+          zip_ext=$zip
+      else
+          echo "xz not found in PATH using gzip"
+      fi
       ;;
     l)
-      level="$OPTARG"
+      level="-$OPTARG"
       ;;
     h)
       helpfunction
@@ -46,6 +52,12 @@ while getopts 't:p:n:l:hax' OPTION; do
 done
 shift "$(($OPTIND -1))"
 
+# Bzip -0 is better and faster than gzip default, and for text the standard level isn't much better and much slower.
+if [[ $zip == "bz" ]];then 
+    if [ -z "$level" ];then 
+        level="-0"
+    fi
+fi
 
 echo "namespace is $namespace"
 echo "pod match string is $pod"
@@ -65,14 +77,20 @@ cd /tmp/k8-logs-script-"$namespace"-"$datastamp" || exit
 
 
 for curr_pod in $running_pods; do
-   kubectl -n "$namespace" logs "$curr_pod" --all-containers=true $taillines | $zip > "${curr_pod}.log.$zip"
+   kubectl -n "$namespace" logs "$curr_pod" --all-containers=true $taillines | $zip $level > "${curr_pod}.log.$zip_ext"
    kubectl -n "$namespace" describe pods "$curr_pod"  2>&1 >>"${curr_pod}".describe
    # Less awk more formating?
    (kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" 2>/dev/null|grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events 2>&1) >>"${curr_pod}".describe
 done
 
+
+for described in $(ls *.describe);do 
+    $zip $level $described
+done
+
+
 cd "$startdir" || exit
-tar czf "k8-logs-script-$namespace-$datastamp.tgz" -C /tmp "k8-logs-script-$namespace-$datastamp"
-echo "k8-logs-script-$namespace-$datastamp.tgz" 
+tar czf "k8-logs-script-$namespace-$datastamp.tar" -C /tmp "k8-logs-script-$namespace-$datastamp"
+echo "Created k8-logs-script-$namespace-$datastamp.tar" 
 
 rm -rf "/tmp/k8-logs-script-$namespace-$datastamp"
