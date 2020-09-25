@@ -602,15 +602,20 @@ cluster_test(){
     command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'
     echo "Starting Cluster Tests"
     # Setup a DaemonSet to run tests on all nodes.
-    echo 'apiVersion: extensions/v1beta1
+    echo 'apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: nirmata-net-test-all
+  labels:
+    app.kubernetes.io/name: nirmata-net-test-all-app
 spec:
+  selector:
+    matchLabels:
+        app.kubernetes.io/name: nirmata-net-test-all-app
   template:
     metadata:
       labels:
-        app: nirmata-net-test-all-app
+        app.kubernetes.io/name: nirmata-net-test-all-app
     spec:
       containers:
         - name: nirmata-net-test-node
