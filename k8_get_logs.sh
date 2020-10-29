@@ -5,8 +5,13 @@ pod="."
 taillines="--tail 50000"
 datastamp=$(date "+%Y%m%d-%H%M%S")
 startdir=$(pwd)
-zip="gzip"
-zip_ext="gz"
+if command -v xz &> /dev/null;then 
+    zip="xz"
+    zip_ext=$zip
+else
+    zip="gzip"
+    zip_ext="gz"
+fi
 
 helpfunction(){
     echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] " >&2
@@ -53,7 +58,7 @@ done
 shift "$(($OPTIND -1))"
 
 # Bzip -0 is better and faster than gzip default, and for text the standard level isn't much better and much slower.
-if [[ $zip == "bz" ]];then 
+if [[ $zip == "xz" ]];then 
     if [ -z "$level" ];then 
         level="-0"
     fi
