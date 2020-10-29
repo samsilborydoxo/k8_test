@@ -1,5 +1,5 @@
 FROM ubuntu:focal
-# We could use a smaller image but sendemail's requirements tend to make everything small.
+# We could use a smaller image but sendemail's requirements tend to make everything the same size.
 
 RUN apt-get update && \
     apt-get -y upgrade && \
