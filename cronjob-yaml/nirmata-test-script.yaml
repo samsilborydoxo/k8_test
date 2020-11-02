@@ -2,7 +2,12 @@ apiVersion: v1
 data:
   nirmata_test.sh: "#!/bin/bash\n# shellcheck disable=SC1117,SC2086,SC2001\n\n# This
     might be better done in python or ruby, but we can't really depend on those existing
-    or having useful modules on customer sites or containers.\n\nversion=1.0.5\n#default
+    or having useful modules on customer sites or containers.\n\n# This script has
+    3 functional modes.  You can in theory run all 3 modes, but really you should
+    run them independently even when that makes sense.\n# Test local system for K8
+    compatiblity, and basic custom cluster sanity tests. --local\n# Test K8 for basic
+    sanity --cluster\n# Test Nirmata installation mainly mongodb. --nirmata\n#    Note
+    this script considers any nirmata installation that isn't HA to be in warning.\n\n\nversion=1.0.5\n#default
     external dns target\nDNSTARGET=nirmata.com\n#default service target\nSERVICETARGET=kubernetes.default.svc.cluster.local\n#
     set to zero to default to all namespaces\nallns=1\n# set to zero to default to
     curl url\ncurl=1\n# Default namespace for nirmata services\nnamespace=\"nirmata\"\n#
@@ -125,44 +130,48 @@ data:
     \       #    script_args=\" $script_args $1 $2 \"\n        #    EMAIL_OPTS=\"\\'$2\\'\"\n
     \       #    shift\n        #    shift\n        #;;\n        -h|--help)\n            helpfunction\n
     \           exit 0\n        ;;\n        # Remember that shifting doesn't remove
-    later args from the loop\n        -*)\n            helpfunction\n            exit
-    1\n        ;;\n    esac\ndone\n# We don't ever want to pass --ssh to ssh!!!\nscript_args=$(echo
+    later args from the loop\n        # We will exir on any arg with a - even if we
+    shift it away.\n        -*)\n            helpfunction\n            exit 1\n        ;;\n
+    \   esac\ndone\n# We don't ever want to pass --ssh to ssh or we get ssh inception,
+    but without DiCaprio.  (Although likely it will just break.)\nscript_args=$(echo
     $script_args |sed 's/--ssh//')\n# shellcheck disable=SC2139\nalias kubectl=\"kubectl
-    $add_kubectl \"\n\n# Test mongodb pods\nmongo_test(){\n# mongo testing\necho \"Testing
-    MongoDB Pods\"\nmongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb
+    $add_kubectl \"\n\n# Test mongodb pods\nmongo_test(){\necho \"Testing MongoDB
+    Pods\"\nmongo_ns=$(kubectl get pod --all-namespaces -l nirmata.io/service.name=mongodb
     --no-headers | awk '{print $1}'|head -1)\nmongos=$(kubectl get pod --namespace=$mongo_ns
     -l nirmata.io/service.name=mongodb --no-headers | awk '{print $1}')\nmongo_num=0\n#
     The mongo master (or masters ?!!?)\nmongo_master=\"\"\n# Number of masters (ideally
-    one)\nmongo_masters=0\nmongo_error=0\nfor mongo in $mongos; do\n    if kubectl
-    -n $mongo_ns get pod $mongo --no-headers |awk '{ print $2 }' |grep -q '[0-2]/2';
-    then\n        mongo_container=\"-c mongodb\"\n    else\n        mongo_container=\"\"\n
-    \   fi\n    cur_mongo=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh
-    -c 'echo \"db.serverStatus()\" |mongo' 2>&1|grep  '\"ismaster\"')\n    if [[  $cur_mongo
-    =~ \"true\" ]];then\n        echo \"$mongo is master\"\n        mongo_master=\"$mongo_master
-    $mongo\"\n        mongo_masters=$((mongo_masters+ 1));\n    else\n        if [[
-    \ $cur_mongo =~ \"false\" ]];then\n            echo \"$mongo is a slave\"\n        else\n
-    \           warn \"$mongo is not master or slave! (Are we standalone?)\"\n            mongo_error=1\n
-    \           kubectl -n $mongo_ns get pod $mongo --no-headers -o wide\n        fi\n
-    \   fi\n    mongo_df=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- df
-    /data/db | awk '{ print $5; }' |tail -1|sed s/%//)\n    [[ $mongo_df -gt $df_free_mongo
-    ]] && (error \"Found MongoDB volume at ${mongo_df}% usage on $mongo\" ; \\\n        kubectl
-    -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G'
-    )\n    kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt
+    one)\nmongo_masters=0\nmongo_error=0\nfor mongo in $mongos; do\n    # Depending
+    on the version of mongo we might have a sidecar.  We want to give kubectl the
+    right container.\n    if kubectl -n $mongo_ns get pod $mongo --no-headers |awk
+    '{ print $2 }' |grep -q '[0-2]/2'; then\n        mongo_container=\"-c mongodb\"\n
+    \   else\n        mongo_container=\"\"\n    fi\n    cur_mongo=$(kubectl -n $mongo_ns
+    exec $mongo $mongo_container -- sh -c 'echo \"db.serverStatus()\" |mongo' 2>&1|grep
+    \ '\"ismaster\"')\n    if [[  $cur_mongo =~ \"true\" ]];then\n        echo \"$mongo
+    is master\"\n        mongo_master=\"$mongo_master $mongo\"\n        mongo_masters=$((mongo_masters+
+    1));\n    else\n        if [[  $cur_mongo =~ \"false\" ]];then\n            echo
+    \"$mongo is a slave\"\n        else\n            warn \"$mongo is not master or
+    slave! (Are we standalone?)\"\n            mongo_error=1\n            kubectl
+    -n $mongo_ns get pod $mongo --no-headers -o wide\n        fi\n    fi\n    mongo_df=$(kubectl
+    -n $mongo_ns exec $mongo $mongo_container -- df /data/db | awk '{ print $5; }'
+    |tail -1|sed s/%//)\n    if [[ $mongo_df -gt $df_free_mongo ]];then\n        error
+    \"Found MongoDB volume at ${mongo_df}% usage on $mongo\"\n        kubectl -n $mongo_ns
+    exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G'\n    fi\n
+    \   kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt
     |grep '[0-9]G' && \\\n        warn \"WiredTiger lookaside file is very large on
     $mongo. Consider increasing Mongodb memory.\"\n    mongo_num=$((mongo_num + 1));\n
-    \   mongo_stateStr=$(kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c
-    'echo \"rs.status()\" |mongo' 2>&1 |grep stateStr)\n    if [[ $mongo_stateStr
-    =~ RECOVERING || $mongo_stateStr =~ DOWN || $mongo_stateStr =~ STARTUP ]];then\n
+    \   mongo_stateStr_full=$(kubectl -n $mongo_ns exec $mongo $mongo_container --
+    sh -c 'echo \"rs.status()\" |mongo' 2>&1)\n    mongo_stateStr=$(echo $mongo_stateStr_full
+    |grep stateStr)\n    if [[ $mongo_stateStr =~ RECOVERING || $mongo_stateStr =~
+    DOWN || $mongo_stateStr =~ STARTUP ]];then\n        echo $mongo_stateStr_full\n
     \       if [[ $mongo_stateStr =~ RECOVERING ]];then warn \"Detected recovering
     Mongodb from this node!\"; fi\n        if [[ $mongo_stateStr =~ DOWN ]];then error
     \"Detected Mongodb in down state from this node!\"; fi\n        if [[ $mongo_stateStr
     =~ STARTUP ]];then warn \"Detected Mongodb in startup state from this node!\";
-    fi\n        kubectl -n $mongo_ns exec $mongo $mongo_container -- sh -c 'echo \"rs.status()\"
-    |mongo'\n    fi\ndone\nif [[ $mongo_num -gt 3 ]];then\n    error \"Found $mongo_num
-    Mongo Pods $mongos!!\"\n    mongo_error=1\nfi\nif [[ $mongo_num -eq 0 ]];then\n
-    \   error \"Found Mongo Pods $mongo_num!!\" && mongo_error=1\nelse\n    [[ $mongo_num
-    -lt 3 ]] && warn \"Found $mongo_num Mongo Pods\"  && mongo_error=1\nfi\n\nif [[
-    $mongo_masters -lt 1 ]]; then\n    if [[ $mongo_num -eq 1 ]];then\n\t    warn
+    fi\n    fi\ndone\nif [[ $mongo_num -gt 3 ]];then\n    # Are we ever goign to run
+    more than 3 pods?\n    error \"Found $mongo_num Mongo Pods $mongos!!\"\n    mongo_error=1\nfi\nif
+    [[ $mongo_num -eq 0 ]];then\n    error \"Found Mongo Pods $mongo_num!!\" && mongo_error=1\nelse\n
+    \   [[ $mongo_num -lt 3 ]] && warn \"Found $mongo_num Mongo Pods\"  && mongo_error=1\nfi\n\nif
+    [[ $mongo_masters -lt 1 ]]; then\n    if [[ $mongo_num -eq 1 ]];then\n\t    warn
     \"No Mongo Master found!! (Assuming standalone)\"\n    else\n        error \"No
     Mongo Master found with multiple mongo nodes!!\"\n        mongo_error=1\n    fi\nelse\n
     \   if [[ $mongo_masters -gt 1 ]];then\n        error \"Found $mongo_masters masters:
@@ -171,7 +180,8 @@ data:
     \"Testing Zookeeper pods\"\nzoo_ns=$(kubectl get pod --all-namespaces -l 'nirmata.io/service.name
     in (zookeeper, zk)' --no-headers | awk '{print $1}'|head -1)\nzoos=$(kubectl get
     pod -n $zoo_ns -l 'nirmata.io/service.name in (zookeeper, zk)' --no-headers |
-    awk '{print $1}')\nzoo_num=0\nzoo_leader=\"\"\nfor zoo in $zoos; do\n    curr_zoo=$(kubectl
+    awk '{print $1}')\nzoo_num=0\nzoo_leader=\"\"\nfor zoo in $zoos; do\n    # High
+    node counts indicate a resource issue or a cleanup failure.\n    curr_zoo=$(kubectl
     -n $zoo_ns exec $zoo -- sh -c \"/opt/zookeeper-*/bin/zkServer.sh status\" 2>&1|grep
     Mode)\n    zoo_node_count=$(kubectl exec $zoo -n $zoo_ns -- sh -c \"echo srvr
     | nc localhost 2181|grep Node.count:\" |awk '{ print $3; }')\n    if [ $zoo_node_count
@@ -187,12 +197,13 @@ data:
     \       fi\n\n    fi\n    zoo_num=$((zoo_num + 1));\n    zoo_df=$(kubectl -n $zoo_ns
     exec $zoo -- df /var/lib/zookeeper | awk '{ print $5; }' |tail -1|sed s/%//)\n
     \   [[ $zoo_df -gt $df_free ]] && error \"Found zookeeper volume at ${zoo_df}%
-    usage on $zoo!!\"\ndone\n\n# Crude parse, but it will do for now.\nzkCli=$(kubectl
-    exec $zoo -n $zoo_ns -- sh -c \"ls /opt/zoo*/bin/zkCli.sh|head -1\")\nconnected_kaf=$(kubectl
-    exec $zoo -n $zoo_ns -- sh -c \"echo ls /brokers/ids | $zkCli\")\ncon_kaf_num=0\n#
-    What was I thinking here?\n# shellcheck disable=SC2076\nif [[ $connected_kaf =~
-    '[0, 1, 2]' ]];then\n    con_kaf_num=3\nfi\n# shellcheck disable=SC2076\nif [[
-    $connected_kaf =~ '[0, 1]' ]];then\n    con_kaf_num=2\nfi\n# shellcheck disable=SC2076\nif
+    usage on $zoo!!\"\ndone\n\n# Many kafkas are connected?\n# Crude parse, but it
+    will do for now.\nzkCli=$(kubectl exec $zoo -n $zoo_ns -- sh -c \"ls /opt/zoo*/bin/zkCli.sh|head
+    -1\")\nconnected_kaf=$(kubectl exec $zoo -n $zoo_ns -- sh -c \"echo ls /brokers/ids
+    | $zkCli\")\ncon_kaf_num=0\n# What was I thinking here? Sure there is a more readable
+    shell aproved means to do this.\n# shellcheck disable=SC2076\nif [[ $connected_kaf
+    =~ '[0, 1, 2]' ]];then\n    con_kaf_num=3\nfi\n# shellcheck disable=SC2076\nif
+    [[ $connected_kaf =~ '[0, 1]' ]];then\n    con_kaf_num=2\nfi\n# shellcheck disable=SC2076\nif
     [[ $connected_kaf =~ '[0]' ]];then\n    con_kaf_num=1\nfi\n\nif [[ $zoo_num -gt
     3 ]];then\n    error \"Found $zoo_num Zookeeper Pods $zoos!!\"\n    zoo_error=1\nfi\nif
     [[ $zoo_num -eq 0 ]];then\n    error \"Found Zero Zookeeper Pods !!\"\n    zoo_error=1\nelse\n
@@ -214,17 +225,20 @@ data:
     Kafka Pods $kafkas!!!\" && kaf_error=1\nif [[ $kaf_num -eq 0 ]];then\n    error
     \"Found Zero Kafka Pods!!!\"\n    kaf_error=1\nelse\n    [[ $kaf_num -lt 3 ]]
     && warn \"Found $kaf_num Kafka Pod!\"\n    kaf_error=1\nfi\n[[ $kaf_error -eq
-    0 ]] && good \"Kafka passed tests\"\n}\n\n#function to email results\ndo_email(){\nif
-    [[ $email -eq 0 ]];then\n    # Check for certs in the cronjob's container\n    if
-    [ -e /certs/ ];then\n        cp -f /certs/*.crt /usr/local/share/ca-certificates/\n
-    \       update-ca-certificates\n    fi\n    [ -z $logfile ] && logfile=\"/tmp/k8_test.$$\"\n
-    \   [ -z $EMAIL_USER ] && EMAIL_USER=\"\" #would this ever work?\n    [ -z $EMAIL_PASSWD
-    ] && EMAIL_PASSWD=\"\" #would this ever work?\n    #[ -z $TO ] && error \"No TO
-    address given!!!\" && exit 1 # Why did I comment this out?\n    [ -z $FROM ] &&
-    FROM=\"k8@nirmata.com\" && warn \"You provided no From address using $FROM\"\n
-    \   [ -z \"$SUBJECT\" ] && SUBJECT=\"K8 test script error\" && warn \"You provided
-    no Subject using $SUBJECT\"\n    [ -z $SMTP_SERVER ] && error \"No smtp server
-    given!!!\" && exit 1\n    # This needs to be redone\n    if [[ ${alwaysemail}
+    0 ]] && good \"Kafka passed tests\"\n# Is there more to test is it enough that
+    the zookeeper test verifies the number of connection?\n}\n\n#function to email
+    results\ndo_email(){\nif [[ $email -eq 0 ]];then\n    # Check for certs in the
+    cronjob's container as sendEmail won't use a server that doesn't auth.\n    #
+    This won't work for any that isn't debianish.\n    if [ -e /certs/ ];then\n        cp
+    -f /certs/*.crt /usr/local/share/ca-certificates/\n        update-ca-certificates\n
+    \   fi\n    [ -z $logfile ] && logfile=\"/tmp/k8_test.$$\"\n    [ -z $EMAIL_USER
+    ] && EMAIL_USER=\"\" #would this ever work?\n    [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD=\"\"
+    #would this ever work?\n    #[ -z $TO ] && error \"No TO address given!!!\" &&
+    exit 1 # Why did I comment this out?\n    [ -z $FROM ] && FROM=\"k8@nirmata.com\"
+    && warn \"You provided no From address using $FROM\"\n    [ -z \"$SUBJECT\" ]
+    && SUBJECT=\"K8 test script error\" && warn \"You provided no Subject using $SUBJECT\"\n
+    \   [ -z $SMTP_SERVER ] && error \"No smtp server given!!!\" && exit 1\n    #
+    This needs to be redone with less nesting and more sanity.\n    if [[ ${alwaysemail}
     -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then\n        if [[ $warnok -eq 0
     ]];then\n            if [[ ${alwaysemail} -ne 0 ]];then\n                if [[
     ${error} -eq 0 ]];then\n                    return 0\n                fi\n            fi\n
@@ -243,15 +257,17 @@ data:
     \           #If they named it something else don't delete\n            rm -f /tmp/k8_test.$$\n
     \       done\n    fi\nfi\n}\n\n# This tests the sanity of your k8 cluster\ncluster_test(){\n
     \   command -v kubectl &>/dev/null || error 'No kubectl found in path!!!'\n    echo
-    \"Starting Cluster Tests\"\n    # Setup a DaemonSet to test dns on all nodes.\n
-    \   echo 'apiVersion: extensions/v1beta1\nkind: DaemonSet\nmetadata:\n  name:
-    nirmata-net-test-all\nspec:\n  template:\n    metadata:\n      labels:\n        app:
-    nirmata-net-test-all-app\n    spec:\n      containers:\n        - name: nirmata-net-test-node\n
-    \         image: nicolaka/netshoot\n          command: [ \"/bin/sh\", \"-c\",
-    \"sleep  100000\" ]' >/tmp/nirmata-net-test-all.yml\n\n    namespaces=\"$(kubectl
-    get ns  --no-headers | awk '{print $1}')\"\n    for ns in $namespaces;do\n            kubectl
-    --namespace=$ns delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n
-    \   done\n    kubectl --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true
+    \"Starting Cluster Tests\"\n    # Setup a DaemonSet to run tests on all nodes.\n
+    \   echo 'apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: nirmata-net-test-all\n
+    \ labels:\n    app.kubernetes.io/name: nirmata-net-test-all-app\nspec:\n  selector:\n
+    \   matchLabels:\n        app.kubernetes.io/name: nirmata-net-test-all-app\n  template:\n
+    \   metadata:\n      labels:\n        app.kubernetes.io/name: nirmata-net-test-all-app\n
+    \   spec:\n      containers:\n        - name: nirmata-net-test-node\n          image:
+    nicolaka/netshoot\n          command: [ \"/bin/sh\", \"-c\", \"sleep  100000\"
+    ]' >/tmp/nirmata-net-test-all.yml\n\n    namespaces=\"$(kubectl get ns  --no-headers
+    | awk '{print $1}')\"\n    for ns in $namespaces;do\n            kubectl --namespace=$ns
+    delete ds nirmata-net-test-all --ignore-not-found=true &>/dev/null\n    done\n
+    \   kubectl --namespace=$namespace delete ds nirmata-net-test-all --ignore-not-found=true
     &>/dev/null\n\n    if [ $allns -eq 1 ];then\n        namespaces=$namespace\n    fi\n
     \   for ns in $namespaces;do\n        kubectl --namespace=$ns apply -f /tmp/nirmata-net-test-all.yml
     &>/dev/null\n    done\n    #echo Testing namespaces $namespaces\n\n    #check
@@ -262,56 +278,60 @@ data:
     .;then\n        warn 'Above nodes are unschedulable!!'\n    fi\n\n    times=0\n
     \   required_pods=$(kubectl get node --no-headers | awk '{print $2}' |grep -c
     Ready )\n    num_ns=$(echo $namespaces |wc -w)\n    required_pods=$((required_pods
-    * num_ns))\n    #echo required_pods is $required_pods\n    echo -n 'Waiting for
-    nirmata-net-test-all pods to start'\n    until [[ $(kubectl get pods -l app=nirmata-net-test-all-app
-    --no-headers --all-namespaces|awk '{print $4}' |grep -c Running) -ge $required_pods
-    ]]|| \\\n      [[ $times = 60 ]];do\n        sleep 1;\n        echo -n .;\n        times=$((times
-    + 1));\n    done\n    echo\n\n    # Do we have at least as many pods as nodes?
-    (Do we care enough to do a compare node to pod?)\n    if [[ $(kubectl -n $namespace
-    get pods -l app=nirmata-net-test-all-app --no-headers |awk '{print $3}' |grep
-    -c Running) -ne \\\n      $(kubectl get node --no-headers | awk '{print $2}' |grep
-    -c Ready) ]] ;then\n        error 'Failed to start nirmata-net-test-all on all
-    nodes!!'\n        echo Debugging:\n        kubectl get pods -l app=nirmata-net-test-all-app
-    -o wide\n        kubectl get node\n    fi\n\n    dns_error=0\n    for ns in $namespaces;do\n
-    \       echo Testing $ns namespace\n    for pod in $(kubectl -n $ns get pods -l
-    app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do\n
-    \       echo Testing \"$(kubectl -n $ns get pods $pod -o wide --no-headers| awk
-    '{print $7}') Namespace $ns\"\n        if  kubectl exec $pod -- nslookup $DNSTARGET
-    2>&1|grep -e can.t.resolve -e does.not.resolve -e can.t.find -e No.answer;then\n
-    \           warn \"Can not resolve external DNS name $DNSTARGET on $pod.\"\n            kubectl
-    -n $ns get pod $pod -o wide\n            kubectl -n $ns exec $pod -- sh -c \"nslookup
-    $DNSTARGET\"\n            echo\n        else\n            good \"DNS test $DNSTARGET
-    on $pod suceeded.\"\n        fi\n        #kubectl -n $ns exec $pod -- nslookup
+    * num_ns))\n    echo -n 'Waiting for nirmata-net-test-all pods to start'\n    until
+    [[ $(kubectl get pods -l app=nirmata-net-test-all-app --no-headers --all-namespaces|awk
+    '{print $4}' |grep -c Running) -ge $required_pods ]]|| \\\n      [[ $times = 60
+    ]];do\n        sleep 1;\n        echo -n .;\n        times=$((times + 1));\n    done\n
+    \   echo\n\n    # Do we have at least as many pods as nodes? (Do we care enough
+    to do a compare node to pod?)\n    if [[ $(kubectl -n $namespace get pods -l app=nirmata-net-test-all-app
+    --no-headers |awk '{print $3}' |grep -c Running) -ne \\\n      $(kubectl get node
+    --no-headers | awk '{print $2}' |grep -c Ready) ]] ;then\n        error 'Failed
+    to start nirmata-net-test-all on all nodes!!'\n        echo Debugging:\n        kubectl
+    get pods -l app=nirmata-net-test-all-app -o wide\n        kubectl get node\n    fi\n\n
+    \   dns_error=0\n    for ns in $namespaces;do\n        echo Testing $ns namespace\n
+    \   for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers
+    |grep Running |awk '{print $1}');do\n        node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName
+    -n $ns --no-headers)\n        echo \"Testing DNS on Node $node in Namespace $ns\"\n
+    \       if  kubectl exec $pod -- nslookup $DNSTARGET 2>&1|grep -e can.t.resolve
+    -e does.not.resolve -e can.t.find -e No.answer;then\n            warn \"Can not
+    resolve external DNS name $DNSTARGET in $ns.\"\n            kubectl -n $ns get
+    pod $pod -o wide\n            kubectl -n $ns exec $pod -- sh -c \"nslookup $DNSTARGET\"\n
+    \           echo\n        else\n            good \"DNS test $DNSTARGET on $node
+    in $ns suceeded.\"\n        fi\n        #kubectl -n $ns exec $pod -- nslookup
     $SERVICETARGET\n        if kubectl -n $ns exec $pod -- nslookup $SERVICETARGET
     2>&1|grep -e can.t.resolve -e does.not.resolve -e can.t.find -e No.answer;then\n
-    \           warn \"Can not resolve $SERVICETARGET service on $pod\"\n            echo
-    'Debugging info:'\n            kubectl get pod $pod -o wide\n            dns_error=1\n
-    \           kubectl -n $ns exec $pod -- nslookup $DNSTARGET\n            kubectl
-    -n $ns exec $pod -- nslookup $SERVICETARGET\n            kubectl -n $ns exec $pod
-    -- cat /etc/resolv.conf\n            error \"DNS test failed to find $SERVICETARGET
-    service on $pod\"\n        else\n            good \"DNS test $SERVICETARGET on
-    $pod suceeded.\"\n        fi\n        if [[ $curl -eq 0 ]];then\n             if
-    [[ $http -eq 0 ]];then\n                 if  kubectl -n $ns exec $pod -- sh -c
-    \"if curl --max-time 5 http://$SERVICETARGET; then exit 0; else exit 1; fi\" 2>&1|grep
-    -e 'command terminated with exit code 1';then\n                     error \"http://$SERVICETARGET
-    failed to respond to curl in 5 seconds!\"\n                 else\n                     good
-    \"HTTP test $SERVICETARGET on $pod suceeded.\"\n                 fi\n             else\n
+    \           warn \"Can not resolve $SERVICETARGET service on $node in $ns\"\n
+    \           echo 'Debugging info:'\n            kubectl get pod $pod -o wide\n
+    \           dns_error=1\n            kubectl -n $ns exec $pod -- nslookup $DNSTARGET\n
+    \           kubectl -n $ns exec $pod -- nslookup $SERVICETARGET\n            kubectl
+    -n $ns exec $pod -- cat /etc/resolv.conf\n            error \"DNS test failed
+    to find $SERVICETARGET service on $node in $ns\"\n        else\n            good
+    \"DNS test $SERVICETARGET on $node in $ns suceeded.\"\n        fi\n        if
+    [[ $curl -eq 0 ]];then\n             if [[ $http -eq 0 ]];then\n                 if
+    \ kubectl -n $ns exec $pod -- sh -c \"if curl --max-time 5 http://$SERVICETARGET;
+    then exit 0; else exit 1; fi\" 2>&1|grep -e 'command terminated with exit code
+    1';then\n                     error \"http://$SERVICETARGET failed to respond
+    to curl in 5 seconds!\"\n                 else\n                     good \"HTTP
+    test $SERVICETARGET on $node in $ns suceeded.\"\n                 fi\n             else\n
     \                if  kubectl -n $ns exec $pod -- sh -c \"if curl --max-time 5
     -k https://$SERVICETARGET; then exit 0; else exit 1; fi\" 2>&1|grep -e 'command
     terminated with exit code 1';then\n                     error \"https://$SERVICETARGET
     failed to respond to curl in 5 seconds!\"\n                 else\n                     good
-    \"HTTPS test $SERVICETARGET on $pod suceeded.\"\n                 fi\n             fi\n
-    \       fi\n\n    done\n    done\n\n    if [[ dns_error -eq 1 ]];then\n        warn
-    \"DNS issues detected\"\n        echo 'Additional debugging info:'\n        kubectl
-    get svc -n kube-system kube-dns coredns\n        kubectl get deployments -n kube-system
-    coredns kube-dns\n        echo 'Note you should have either coredns or kube-dns
-    running. Not both.'\n    fi\n\n    for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app
-    --no-headers |grep Running |awk '{print $1}');do\n      root_df=$(kubectl -n $ns
-    exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)\n      [[ $root_df
-    -gt $df_free_root ]] && ( node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName)
-    ;\\\n        error \"Found docker partition ${root_df}% usage on $node\" ; )\n\n
-    \   done\n    namespaces=\"$(kubectl get ns  --no-headers | awk '{print $1}')\"\n
-    \   for ns in $namespaces;do\n      kubectl --namespace=$ns delete ds nirmata-net-test-all
+    \"HTTPS test $SERVICETARGET on $node in $ns suceeded.\"\n                 fi\n
+    \            fi\n        fi\n\n    done\n    done\n\n    if [[ dns_error -eq 1
+    ]];then\n        warn \"DNS issues detected\"\n        echo 'Additional debugging
+    info:'\n        kubectl get svc -n kube-system kube-dns coredns\n        kubectl
+    get deployments -n kube-system coredns kube-dns\n        echo 'Note you should
+    have either coredns or kube-dns running. Not both.'\n    fi\n    echo Testing
+    space availble on docker partition.\n    for pod in $(kubectl -n $ns get pods
+    -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do\n
+    \     root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed
+    s/%//)\n      node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName
+    -n $ns --no-headers)\n      if [[ $root_df -gt $df_free_root ]];then\n        error
+    \"Found docker partition at ${root_df}% usage on $node\"\n      else\n        good
+    \"Found docker partition at ${root_df}% usage on $node\"\n      fi\n    done\n
+    \   namespaces=\"$(kubectl get ns  --no-headers | awk '{print $1}')\"\n    for
+    ns in $namespaces;do\n      kubectl --namespace=$ns delete ds nirmata-net-test-all
     --ignore-not-found=true &>/dev/null\n    done\n\n\n\n}\n\n# test if your local
     system can run k8\nlocal_test(){\necho \"Starting Local Tests\"\n\n# Kubelet generally
     won't run if swap is enabled.\nif [[ $(swapon -s | wc -l) -gt 1 ]] ;  then\n    if
@@ -360,11 +380,11 @@ data:
     proxy settings, how, what, why\n# Do we really need this has anyone complained?\n\n#test
     for docker\nif ! systemctl is-active docker &>/dev/null ; then\n    warn 'Docker
     service is not active? Maybe you are using some other CRI??'\n    if [[ $fix_issues
-    -eq 0 ]];then\n     echo_cmd sudo systemctl start docker\n    fi\n  else\n    good
+    -eq 0 ]];then\n      echo_cmd sudo systemctl start docker\n    fi\n  else\n    good
     Docker is running\nfi\n\nif ! systemctl is-enabled docker &>/dev/null;then\n    warn
-    'Docker service is starting at boot. Maybe you are using some other CRI??'\n    if
-    [[ $fix_issues -eq 0 ]];then\n     echo_cmd sudo systemctl enable docker\n    fi\n
-    \ else\n    good Docker is starting at boot\nfi\n\nif docker info 2>/dev/null|grep
+    'Docker service is not starting at boot. Maybe you are using some other CRI??'\n
+    \   if [[ $fix_issues -eq 0 ]];then\n      echo_cmd sudo systemctl enable docker\n
+    \   fi\n  else\n    good Docker is starting at boot\nfi\n\nif docker info 2>/dev/null|grep
     mountpoint;then\n  warn 'Docker does not have its own mountpoint'\n  # What is
     the fix for this??? How does this happen I've never seen it.\nfi\n\n# Is the version
     of docker locked/held if not we are going to suffer death by upgrade.\nif [ !

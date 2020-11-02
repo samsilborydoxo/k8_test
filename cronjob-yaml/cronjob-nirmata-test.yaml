@@ -37,7 +37,7 @@ spec:
               name: "nirmata-test-script"
           containers:
           - name: "nirmata-test"
-            image: "ssilbory/nirmata-test:4"
+            image: "ssilbory/nirmata-test:8"
             command:
             - "/scripts/k8_test/nirmata_test.sh"
             args:
