@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash 
 # shellcheck disable=SC1117,SC2086,SC2001
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
@@ -60,6 +60,7 @@ email=1
 # default sendemail containers Note NOT sendmail!
 sendemail='ssilbory/sendemail'
 alwaysemail=1
+localmail=1
 # Set this to fix local issues by default
 fix_issues=1
 # warnings return 2 otherwise
@@ -152,6 +153,7 @@ helpfunction(){
     echo "--email-opts '-o tls=yes'   Additional options to send to the sendemail program."
     echo "--always-email              Send emails on warning and good test results"
     echo "--sendemail                 Set the container used to send email."
+    echo "--mail-local                Use mail command to send email."
     echo "Simple open smtp server:"
     echo "$0 --email --to testy@nirmata.com --smtp smtp.example.com"
     echo "Authenication with an smtp server:"
@@ -328,6 +330,10 @@ for i in "$@";do
         ;;
         --always-email)
             alwaysemail=0
+            shift
+        ;;
+        --mail-local)
+            localmail=0
             shift
         ;;
         --warnok)
@@ -560,10 +566,8 @@ if [[ $email -eq 0 ]];then
     [ -z $logfile ] && logfile="/tmp/k8_test.$$"
     [ -z $EMAIL_USER ] && EMAIL_USER="" #would this ever work?
     [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD="" #would this ever work?
-    #[ -z $TO ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
-    [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
+    [ -z $TO ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
     [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
-    [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
     # This needs to be redone with less nesting and more sanity.
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
         if [[ $warnok -eq 0 ]];then
@@ -581,17 +585,25 @@ if [[ $email -eq 0 ]];then
         # shellcheck disable=SC1012,SC2028,SC2116
         BODY=$(sed -e 's/\x1b\[[0-9;]*m//g' -e 's/$'"/$(echo \\\r)/" ${logfile})
         for email_to in $TO; do
-            if type -P "sendEmail" &>/dev/null; then
+            if [[ $localmail -eq 0 ]];then
+              echo Using local mail client
+              echo "$BODY" |mail -s \""$SUBJECT"\" "$email_to" 
+            else
+              [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
+              [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
+              if type -P "sendEmail" &>/dev/null; then
                 if [ -n "$PASSWORD" ];then
                     echo $BODY |sendEmail -t "$email_to" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" "$EMAIL_OPTS"
-                else
+                  else
                     echo $BODY |sendEmail -t "$email_to" -f "$FROM" -u \""$SUBJECT"\" -s "$SMTP_SERVER" -xu "$EMAIL_USER" -xp "$EMAIL_PASSWD" "$EMAIL_OPTS"
+                  fi
+                else
+                  docker run $sendemail $email_to $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
                 fi
-            else
-                docker run $sendemail $email_to $FROM "$SUBJECT" "${BODY}" $SMTP_SERVER "$EMAIL_USER" "$EMAIL_PASSWD" "$EMAIL_OPTS"
+
+              #If they named it something else don't delete
+              rm -f /tmp/k8_test.$$
             fi
-            #If they named it something else don't delete
-            rm -f /tmp/k8_test.$$
         done
     fi
 fi
