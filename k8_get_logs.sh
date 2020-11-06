@@ -1,11 +1,11 @@
-#!/bin/bash 
+#!/bin/bash
 
 namespace="nirmata"
 pod="."
 taillines="--tail 50000"
 datastamp=$(date "+%Y%m%d-%H%M%S")
 startdir=$(pwd)
-if command -v xz &> /dev/null;then 
+if command -v xz &> /dev/null;then
     zip="xz"
     zip_ext=$zip
 else
@@ -15,7 +15,7 @@ fi
 
 helpfunction(){
     echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] " >&2
-    echo "  -a  All lines" >&2
+    echo "  -a  All lines (default is $taillines if no -a or -t)" >&2
     echo "  -x  Use xz compression" >&2
     echo "  -l  Use this compression level" >&2
 }
@@ -35,7 +35,7 @@ while getopts 't:p:n:l:hax' OPTION; do
       taillines=""
       ;;
     x)
-      if command -v xz &> /dev/null;then 
+      if command -v xz &> /dev/null;then
           zip="xz"
           zip_ext=$zip
       else
@@ -57,9 +57,9 @@ while getopts 't:p:n:l:hax' OPTION; do
 done
 shift "$(($OPTIND -1))"
 
-# Bzip -0 is better and faster than gzip default, and for text the standard level isn't much better and much slower.
-if [[ $zip == "xz" ]];then 
-    if [ -z "$level" ];then 
+# xz -0 is better and faster than gzip default, and for text the standard level isn't much better and much slower.
+if [[ $zip == "xz" ]];then
+    if [ -z "$level" ];then
         level="-0"
     fi
 fi
@@ -68,12 +68,12 @@ echo "namespace is $namespace"
 echo "pod match string is $pod"
 
 running_pods=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" -n "$namespace"  |grep "$pod")
-if [ -z "$running_pods" ]; then 
+if [ -z "$running_pods" ]; then
     echo "No pods found for $pod in  $namespace"
     exit 0
 fi
 echo -e "Found runing pods: \n$running_pods"
-echo 
+echo
 
 rm -rf "/tmp/k8-logs-script-$namespace-$datastamp"
 if [ -e /tmp/k8-logs-script-"$namespace-$datastamp" ];then echo "/tmp/k8-logs-script-$namespace-$datastamp exists bailing out"; exit 1; fi
@@ -89,13 +89,13 @@ for curr_pod in $running_pods; do
 done
 
 
-for described in $(ls *.describe);do 
+for described in $(ls *.describe);do
     $zip $level $described
 done
 
 
 cd "$startdir" || exit
 tar czf "k8-logs-script-$namespace-$datastamp.tar" -C /tmp "k8-logs-script-$namespace-$datastamp"
-echo "Created k8-logs-script-$namespace-$datastamp.tar" 
+echo "Created k8-logs-script-$namespace-$datastamp.tar"
 
 rm -rf "/tmp/k8-logs-script-$namespace-$datastamp"
