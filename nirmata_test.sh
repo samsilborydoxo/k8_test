@@ -10,7 +10,7 @@
 #    Note this script considers any nirmata installation that isn't HA to be in warning.
 
 
-version=1.0.5
+version=1.0.6
 #default external dns target
 DNSTARGET=nirmata.com
 #default service target
