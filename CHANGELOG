@@ -1,3 +1,4 @@
 1.0.7
 - Fix multiple tos
 - Fix always email if subject not provided.  (Missing a subject is a warnign and we email on a warning...)
+- Fix cluster test
