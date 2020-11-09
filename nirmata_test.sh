@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 # shellcheck disable=SC1117,SC2086,SC2001
 
 # This might be better done in python or ruby, but we can't really depend on those existing or having useful modules on customer sites or containers.
@@ -666,7 +666,7 @@ spec:
     num_ns=$(echo $namespaces |wc -w)
     required_pods=$((required_pods * num_ns))
     echo -n 'Waiting for nirmata-net-test-all pods to start'
-    until [[ $(kubectl get pods -l app=nirmata-net-test-all-app --no-headers --all-namespaces|awk '{print $4}' |grep -c Running) -ge $required_pods ]]|| \
+    until [[ $(kubectl get pods -l app.kubernetes.io/name=nirmata-net-test-all-app --no-headers --all-namespaces|awk '{print $4}' |grep -c Running) -ge $required_pods ]]|| \
       [[ $times = 60 ]];do
         sleep 1;
         echo -n .;
@@ -675,18 +675,18 @@ spec:
     echo
 
     # Do we have at least as many pods as nodes? (Do we care enough to do a compare node to pod?)
-    if [[ $(kubectl -n $namespace get pods -l app=nirmata-net-test-all-app --no-headers |awk '{print $3}' |grep -c Running) -ne \
+    if [[ $(kubectl -n $namespace get pods -l app.kubernetes.io/name=nirmata-net-test-all-app --no-headers |awk '{print $3}' |grep -c Running) -ne \
       $(kubectl get node --no-headers | awk '{print $2}' |grep -c Ready) ]] ;then
         error 'Failed to start nirmata-net-test-all on all nodes!!'
         echo Debugging:
-        kubectl get pods -l app=nirmata-net-test-all-app -o wide
+        kubectl get pods -l app.kubernetes.io/name=nirmata-net-test-all-app -o wide
         kubectl get node
     fi
 
     dns_error=0
     for ns in $namespaces;do
         echo Testing $ns namespace
-    for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
+    for pod in $(kubectl -n $ns get pods -l app.kubernetes.io/name=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
         node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName -n $ns --no-headers)
         echo "Testing DNS on Node $node in Namespace $ns"
         if  kubectl exec $pod -- nslookup $DNSTARGET 2>&1|grep -e can.t.resolve -e does.not.resolve -e can.t.find -e No.answer;then
@@ -737,7 +737,7 @@ spec:
         echo 'Note you should have either coredns or kube-dns running. Not both.'
     fi
     echo Testing space availble on docker partition.
-    for pod in $(kubectl -n $ns get pods -l app=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
+    for pod in $(kubectl -n $ns get pods -l app.kubernetes.io/name=nirmata-net-test-all-app --no-headers |grep Running |awk '{print $1}');do
       root_df=$(kubectl -n $ns exec $pod -- df / | awk '{ print $5; }' |tail -1|sed s/%//)
       node=$(kubectl get pod $pod -o=custom-columns=NODE:.spec.nodeName -n $ns --no-headers)
       if [[ $root_df -gt $df_free_root ]];then
