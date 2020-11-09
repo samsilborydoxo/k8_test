@@ -10,7 +10,7 @@
 #    Note this script considers any nirmata installation that isn't HA to be in warning.
 
 
-version=1.0.6
+version=1.0.7
 #default external dns target
 DNSTARGET=nirmata.com
 #default service target
@@ -566,8 +566,8 @@ if [[ $email -eq 0 ]];then
     [ -z $logfile ] && logfile="/tmp/k8_test.$$"
     [ -z $EMAIL_USER ] && EMAIL_USER="" #would this ever work?
     [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD="" #would this ever work?
-    [ -z $TO ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
-    [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && warn "You provided no Subject using $SUBJECT"
+    [ -z "$TO" ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
+    [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && echo -e "\e[33mYou provided no Subject using $SUBJECT \e[0m" 
     # This needs to be redone with less nesting and more sanity.
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
         if [[ $warnok -eq 0 ]];then
