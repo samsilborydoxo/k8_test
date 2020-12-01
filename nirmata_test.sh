@@ -9,11 +9,14 @@
 # Test Nirmata installation mainly mongodb. --nirmata
 #    Note this script considers any nirmata installation that isn't HA to be in warning.
 
-
-version=1.0.7
-#default external dns target
+version=1.0.8
+# Url of script for updates
+script_url='https://raw.githubusercontent.com/silborynirmata/k8_test/master/nirmata_test.sh'
+# Should we update
+update=1
+# default external dns target
 DNSTARGET=nirmata.com
-#default service target
+# default service target
 SERVICETARGET=kubernetes.default.svc.cluster.local
 # set to zero to default to all namespaces
 allns=1
@@ -138,6 +141,7 @@ helpfunction(){
     echo "--service service_target    (Default $SERVICETARGET)."
     echo "--fix                       Attempt to fix issues (local only)"
     echo "--ssh \"user@host.name\"    Ssh to a space-separated list of systems and run local tests"
+    echo "--update                    Update script from $script_url"
     echo "Note that --ssh does not return non-zero on failure on ssh targets.  Parse for:"
     echo "  'Test completed with errors'"
     echo "  'Test completed with warnings'"
@@ -341,6 +345,10 @@ for i in "$@";do
             warnok=0
             shift
         ;;
+        --update)
+          update=0
+          shift
+        ;;
         #--email-opts)
         #    script_args=" $script_args $1 $2 "
         #    EMAIL_OPTS="\'$2\'"
@@ -359,8 +367,35 @@ for i in "$@";do
         ;;
     esac
 done
-# We don't ever want to pass --ssh to ssh or we get ssh inception, but without DiCaprio.  (Although likely it will just break.)
-script_args=$(echo $script_args |sed 's/--ssh//')
+# We don't ever want to pass --ssh or --update.  We might get inception, but without DiCaprio.
+script_args=$(echo $script_args |sed -e 's/--ssh//' -e 's/--update//')
+
+# Update Script?
+if [[ $update == 0 ]];then
+  rm -f /tmp/nirmata_test.sh.download.$$
+  if [ -x "$(command -v wget)" ];then
+    wget -O /tmp/nirmata_test.sh.download.$$ $script_url || error "Download failed of $script_url"
+  else
+    if [ -x "$(command -v curl)" ];then
+      curl $script_url -o  /tmp/nirmata_test.sh.download.$$ || error "Download failed of $script_url"
+    else
+      error "Unable to dowonload $script_url as we can't find curl or wget"
+    fi
+  fi
+  if [ -e /tmp/nirmata_test.sh.download.$$ ];then
+    basename=$(basename $0)
+    dirname=$(dirname $0)
+    fullname="$dirname/$basename"
+    cp -f $fullname $fullname.bak
+    cp -f /tmp/nirmata_test.sh.download.$$ $fullname
+    rm -f /tmp/nirmata_test.sh.download.$$
+    $fullname $script_args
+    exit $?
+  else
+    error "Failed to update script"
+  fi
+fi
+
 # shellcheck disable=SC2139
 alias kubectl="kubectl $add_kubectl "
 
@@ -567,7 +602,7 @@ if [[ $email -eq 0 ]];then
     [ -z $EMAIL_USER ] && EMAIL_USER="" #would this ever work?
     [ -z $EMAIL_PASSWD ] && EMAIL_PASSWD="" #would this ever work?
     [ -z "$TO" ] && error "No TO address given!!!" && exit 1 # Why did I comment this out?
-    [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && echo -e "\e[33mYou provided no Subject using $SUBJECT \e[0m" 
+    [ -z "$SUBJECT" ] && SUBJECT="K8 test script error" && echo -e "\e[33mYou provided no Subject using $SUBJECT \e[0m"
     # This needs to be redone with less nesting and more sanity.
     if [[ ${alwaysemail} -eq 0 || ${error} -gt 0 || ${warn} -gt 0 ]]; then
         if [[ $warnok -eq 0 ]];then
@@ -587,7 +622,7 @@ if [[ $email -eq 0 ]];then
         for email_to in $TO; do
             if [[ $localmail -eq 0 ]];then
               echo Using local mail client
-              echo "$BODY" |mail -s \""$SUBJECT"\" "$email_to" 
+              echo "$BODY" |mail -s \""$SUBJECT"\" "$email_to"
             else
               [ -z $FROM ] && FROM="k8@nirmata.com" && warn "You provided no From address using $FROM"
               [ -z $SMTP_SERVER ] && error "No smtp server given!!!" && exit 1
@@ -994,18 +1029,27 @@ else
 fi
 if docker ps |grep -q -e "hyperkube proxy";then
     good Found hyperkube proxy
-else
-    error Hyperkube proxy is not running!
+  else
+    if docker ps |grep -q -e "kube-proxy";then
+      good Found kube proxy
+    else
+      error Hyperkube proxy is not running!
+    fi
 fi
 if docker ps --no-trunc|grep -q -e 'hyperkube kubelet' ;then
     good Found hyperkube kubelet
 else
     error Hyperkube kubelet is not running!
 fi
-if docker ps |grep -q -e /opt/bin/flanneld ;then
+if docker ps --no-trunc|grep -q -e /opt/bin/flanneld ;then
     good Found flanneld
-else
-    error Flanneld is not running!
+  else
+    if docker ps --no-trunc|grep -q -e /usr/local/bin/kube-router; then
+      good Found kube-router
+
+    else
+      error Flanneld or Kube Router are not running! Are you using a different CNI
+    fi
 fi
 # How do we determine if this is a master?
 #maybe grep -e /usr/local/bin/etcd -e /nirmata-kube-controller -e /metrics-server -e "hyperkube apiserver"
