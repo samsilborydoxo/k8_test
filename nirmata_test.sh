@@ -9,7 +9,7 @@
 # Test Nirmata installation mainly mongodb. --nirmata
 #    Note this script considers any nirmata installation that isn't HA to be in warning.
 
-version=1.0.8
+version=1.0.9
 # Url of script for updates
 script_url='https://raw.githubusercontent.com/silborynirmata/k8_test/master/nirmata_test.sh'
 # Should we update
@@ -1022,7 +1022,7 @@ if systemctl is-enabled nirmata-agent &>/dev/null ; then
 else
     error Nirmata Agent is not enabled at boot
 fi
-if docker ps |grep -q -e nirmata/nirmata-host-agent;then
+if docker ps |grep -q -e nirmata-agent -e nirmata/nirmata-host-agent;then
     good Found nirmata-host-agent
 else
     error nirmata-host-agent is not running!
@@ -1048,7 +1048,7 @@ if docker ps --no-trunc|grep -q -e /opt/bin/flanneld ;then
       good Found kube-router
 
     else
-      error Flanneld or Kube Router are not running! Are you using a different CNI
+      error Flanneld or Kube Router are not running! Are you using a different CNI?
     fi
 fi
 # How do we determine if this is a master?
