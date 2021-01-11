@@ -9,7 +9,7 @@
 # Test Nirmata installation mainly mongodb. --nirmata
 #    Note this script considers any nirmata installation that isn't HA to be in warning.
 
-version=1.0.9
+version=1.1
 # Url of script for updates
 script_url='https://raw.githubusercontent.com/silborynirmata/k8_test/master/nirmata_test.sh'
 # Should we update
@@ -443,9 +443,9 @@ for mongo in $mongos; do
     mongo_stateStr=$(echo $mongo_stateStr_full |grep stateStr)
     if [[ $mongo_stateStr =~ RECOVERING || $mongo_stateStr =~ DOWN || $mongo_stateStr =~ STARTUP ]];then
         echo $mongo_stateStr_full
-        if [[ $mongo_stateStr =~ RECOVERING ]];then warn "Detected recovering Mongodb from this node!"; fi
-        if [[ $mongo_stateStr =~ DOWN ]];then error "Detected Mongodb in down state from this node!"; fi
-        if [[ $mongo_stateStr =~ STARTUP ]];then warn "Detected Mongodb in startup state from this node!"; fi
+        if [[ $mongo_stateStr =~ RECOVERING ]];then warn "Detected recovering Mongodb from this node!"; mongo_error=1; fi
+        if [[ $mongo_stateStr =~ DOWN ]];then error "Detected Mongodb in down state from this node!"; mongo_error=1 ; fi
+        if [[ $mongo_stateStr =~ STARTUP ]];then warn "Detected Mongodb in startup state from this node!"; mongo_error=2; fi
     fi
 done
 if [[ $mongo_num -gt 3 ]];then
