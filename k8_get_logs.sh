@@ -70,31 +70,34 @@ echo "pod match string is $pod"
 running_pods=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" -n "$namespace"  |grep "$pod")
 if [ -z "$running_pods" ]; then
     echo "No pods found for $pod in  $namespace"
-    exit 0
+    exit 1
 fi
 echo -e "Found runing pods: \n$running_pods"
 echo
 
+# Make a temp log dir
 rm -rf "/tmp/k8-logs-script-$namespace-$datastamp"
 if [ -e /tmp/k8-logs-script-"$namespace-$datastamp" ];then echo "/tmp/k8-logs-script-$namespace-$datastamp exists bailing out"; exit 1; fi
 mkdir "/tmp/k8-logs-script-$namespace-$datastamp"
-cd /tmp/k8-logs-script-"$namespace"-"$datastamp" || exit
+cd /tmp/k8-logs-script-"$namespace"-"$datastamp" || exit 1
 
-
+# Loop thru found pods and grab logs
 for curr_pod in $running_pods; do
+   # Compress as we create
    kubectl -n "$namespace" logs "$curr_pod" --all-containers=true $taillines | $zip $level > "${curr_pod}.log.$zip_ext"
    kubectl -n "$namespace" describe pods "$curr_pod"  2>&1 >>"${curr_pod}".describe
-   # Less awk more formating?
+   # Less awk more formating with kubectl?
    (kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" 2>/dev/null|grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events 2>&1) >>"${curr_pod}".describe
 done
 
-
+# We these are small we can do compression aftwards
 for described in $(ls *.describe);do
     $zip $level $described
 done
 
 
-cd "$startdir" || exit
+cd "$startdir" || exit 1
+# No compression as it's all compressed.
 tar czf "k8-logs-script-$namespace-$datastamp.tar" -C /tmp "k8-logs-script-$namespace-$datastamp"
 echo "Created k8-logs-script-$namespace-$datastamp.tar"
 
