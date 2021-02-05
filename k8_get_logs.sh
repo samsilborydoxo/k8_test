@@ -1,7 +1,7 @@
-#!/bin/bash
+#!/bin/bash 
 
 namespace="nirmata"
-pod="."
+pod=""
 taillines="--tail 50000"
 datastamp=$(date "+%Y%m%d-%H%M%S")
 startdir=$(pwd)
@@ -23,7 +23,7 @@ helpfunction(){
 while getopts 't:p:n:l:hax' OPTION; do
   case "$OPTION" in
     p)
-      pod="$OPTARG"
+      pod+=" $OPTARG "
       ;;
     n)
       namespace="$OPTARG"
@@ -57,6 +57,10 @@ while getopts 't:p:n:l:hax' OPTION; do
 done
 shift "$(($OPTIND -1))"
 
+if [ -z "$pod" ];then 
+    pod="."
+fi
+
 # xz -0 is better and faster than gzip default, and for text the standard level isn't much better and much slower.
 if [[ $zip == "xz" ]];then
     if [ -z "$level" ];then
@@ -67,7 +71,11 @@ fi
 echo "namespace is $namespace"
 echo "pod match string is $pod"
 
-running_pods=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" -n "$namespace"  |grep "$pod")
+for p in $pod;do 
+    running_pods+=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" -n "$namespace"  |grep "$p")
+    running_pods+=" "
+done
+
 if [ -z "$running_pods" ]; then
     echo "No pods found for $pod in  $namespace"
     exit 1
