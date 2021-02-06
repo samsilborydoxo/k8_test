@@ -435,6 +435,8 @@ for mongo in $mongos; do
     if [[ $mongo_df -gt $df_free_mongo ]];then
         error "Found MongoDB volume at ${mongo_df}% usage on $mongo"
         kubectl -n $mongo_ns exec $mongo $mongo_container -- du --all -h /data/db/ |grep '^[0-9,.]*G'
+    else
+        good "Found MongoDB volume at ${mongo_df}% usage on $mongo"
     fi
     kubectl -n $mongo_ns exec $mongo $mongo_container -- du  -h /data/db/WiredTigerLAS.wt |grep '[0-9]G' && \
         warn "WiredTiger lookaside file is very large on $mongo. Consider increasing Mongodb memory."
@@ -488,7 +490,7 @@ for zoo in $zoos; do
     curr_zoo=$(kubectl -n $zoo_ns exec $zoo -- sh -c "/opt/zookeeper-*/bin/zkServer.sh status" 2>&1|grep Mode)
     zoo_node_count=$(kubectl exec $zoo -n $zoo_ns -- sh -c "echo srvr | nc localhost 2181|grep Node.count:" |awk '{ print $3; }')
     if [ $zoo_node_count -lt 50000 ];then
-        echo $zoo node count is $zoo_node_count
+        good $zoo node count is $zoo_node_count
     else
         error Error $zoo node count is $zoo_node_count
     fi
