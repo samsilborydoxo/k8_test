@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/bin/bash
 
 namespace="nirmata"
 pod=""
@@ -14,13 +14,14 @@ else
 fi
 
 helpfunction(){
-    echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] " >&2
+    echo "script usage: $(basename "$0") [-n namespace] [-t number_of_log_lines] [ -p pod_name_regex ] [-a] [-x] [-l compression_level] [-c]" >&2
     echo "  -a  All lines (default is $taillines if no -a or -t)" >&2
     echo "  -x  Use xz compression" >&2
     echo "  -l  Use this compression level" >&2
+    echo "  -c  Concatenate log files to one file"  >&2
 }
 
-while getopts 't:p:n:l:hax' OPTION; do
+while getopts 't:p:n:l:haxc' OPTION; do
   case "$OPTION" in
     p)
       pod+=" $OPTARG "
@@ -34,6 +35,9 @@ while getopts 't:p:n:l:hax' OPTION; do
     a)
       taillines=""
       ;;
+    c)
+      cat="yes"
+    ;;
     x)
       if command -v xz &> /dev/null;then
           zip="xz"
@@ -57,7 +61,7 @@ while getopts 't:p:n:l:hax' OPTION; do
 done
 shift "$(($OPTIND -1))"
 
-if [ -z "$pod" ];then 
+if [ -z "$pod" ];then
     pod="."
 fi
 
@@ -71,7 +75,7 @@ fi
 echo "namespace is $namespace"
 echo "pod match string is $pod"
 
-for p in $pod;do 
+for p in $pod;do
     running_pods+=$(kubectl get pods --no-headers -o custom-columns=":metadata.name" -n "$namespace"  |grep "$p")
     running_pods+=" "
 done
@@ -97,6 +101,13 @@ for curr_pod in $running_pods; do
    # Less awk more formating with kubectl?
    (kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe $(kubectl -n "$namespace" describe pod "$curr_pod" 2>/dev/null|grep Controlled.By: |awk '{print $3}')  |grep Controlled.By: |awk '{print $3}') --show-events 2>&1) >>"${curr_pod}".describe
 done
+if [[ $cat == "yes" ]];then
+  for log in *.log.$zip_ext;do
+    echo -e "\n\n$log log" |$zip $level >>logs-cat.xz
+    cat $log >> logs-cat.xz
+    rm $log
+  done
+fi
 
 # We these are small we can do compression aftwards
 for described in $(ls *.describe);do
